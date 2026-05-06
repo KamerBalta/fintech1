@@ -1,0 +1,7 @@
+.vs/
+*.vsidx
+bin/
+obj/
+__pycache__/
+node_modules/
+venv/
