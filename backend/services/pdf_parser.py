@@ -1,133 +1,202 @@
 """
-PDF Parser – pdfplumber ile banka ekstresi ayrıştırma
+Advanced PDF Parser
+- pdfplumber ile tablo + düz metin okuma
+- is_recurring tespiti (fatura/abonelik keyword'leri)
+- Gelecek ay fatura yük tahmini
 """
 import re
 import pdfplumber
-from typing import List, Dict, Any
+import datetime
+import random
 from io import BytesIO
+from typing import List, Dict, Any, Tuple
 
-# Harcama kategorisi: anahtar kelime → kategori
-CATEGORY_RULES: Dict[str, List[str]] = {
-    "Market & Gıda":    ["market","migros","a101","bim","carrefour","şok","food",
-                          "restaurant","burger","pizza","cafe","kahve","yemek"],
-    "Ulaşım":           ["akbil","metrobüs","metro","taksi","uber","bolt","petrol",
-                          "benzin","shell","total","opet","otopark","araç"],
-    "Eğlence":          ["netflix","spotify","youtube","cinema","sinema","oyun",
-                          "game","biletix","konser","eğlence","bar","pub"],
-    "Faturalar":        ["elektrik","su","doğalgaz","ttnet","turkcell","vodafone",
-                          "internet","fatura","abonelik"],
-    "Sağlık":           ["eczane","hastane","doktor","klinik","optik","pharmacy",
-                          "medikal","sağlık"],
-    "Alışveriş":        ["zara","h&m","lcw","koton","defacto","mavi","trendyol",
-                          "hepsiburada","amazon","n11","gittigidiyor","sahibinden"],
-    "Eğitim":           ["udemy","coursera","okul","kurs","kitap","d&r","kitapevi"],
-    "Yatırım & Finans": ["borsa","kripto","bist","hisse","fon","sigorta","kredi"],
-}
+# ─── Kategori & Tekrar Kuralları ──────────────────────────────────────────────
+RULES: List[Tuple[str, str, bool]] = [
+    # (keyword_pattern, category, is_recurring)
+    # Faturalar
+    (r"türk telekom|ttnet|turkcell|vodafone|türksat|internet|gsm",  "Faturalar",     True),
+    (r"enerjisa|enerji|elektrik|aydem|başkent edaş|toroslar",       "Faturalar",     True),
+    (r"igdaş|bağkur|doğalgaz|gazdaş|akenerji",                      "Faturalar",     True),
+    (r"su .*(idaresi|genel)|iski|aski|meski|büyükşehir su",          "Faturalar",     True),
+    (r"sigorta|emekli|bağ-kur|ssk|sgk",                             "Sigorta",       True),
+    # Abonelikler
+    (r"netflix|disney\+?|exxen|blutv|gain\b|mubi",                  "Abonelik",      True),
+    (r"spotify|apple music|youtube premium|deezer",                  "Abonelik",      True),
+    (r"amazon prime|microsoft 365|office 365|adobe|linkedin",        "Abonelik",      True),
+    (r"udemy|coursera|duolingo|bein connect",                        "Abonelik",      True),
+    # Kredi / Finansal
+    (r"kredi taksit|kart borcu|banka|mortgage|konut kredisi",        "Kredi",         True),
+    # Market
+    (r"migros|carrefour|bim\b|a101|şok market|metro|macro",         "Market & Gıda", False),
+    (r"getir|yemeksepeti|trendyol yemek|pizza|burger|restoran",      "Yemek",         False),
+    # Ulaşım
+    (r"uber|bolt\b|taksi|otopark|köprü|otoyol|hgs|ogs",             "Ulaşım",        False),
+    (r"akbil|metro|metrobüs|marmaray|tramvay|istanbul kart",         "Ulaşım",        False),
+    (r"shell|opet|bp\b|total\b|petrol|benzin|akaryakıt",            "Ulaşım",        False),
+    # Alışveriş
+    (r"trendyol|hepsiburada|amazon|n11|gittigidiyor|çiçeksepeti",   "Alışveriş",     False),
+    (r"zara|h&m|lcw|koton|defacto|mavi|flo|bershka",               "Alışveriş",     False),
+    # Sağlık
+    (r"eczane|medikal|hastane|klinik|diş|optik|gözlük",             "Sağlık",        False),
+    # Eğlence
+    (r"sinema|biletix|konser|müze|spor|fitness|gym",                "Eğlence",       False),
+]
 
-def categorize(description: str) -> str:
-    desc_lower = description.lower()
-    for category, keywords in CATEGORY_RULES.items():
-        for kw in keywords:
-            if kw in desc_lower:
-                return category
-    return "Diğer"
+
+def categorize_and_tag(description: str) -> Tuple[str, bool]:
+    desc = description.lower()
+    for pattern, category, recurring in RULES:
+        if re.search(pattern, desc):
+            return category, recurring
+    return "Diğer", False
+
+
+# ─── Tutar Ayrıştırma ─────────────────────────────────────────────────────────
+AMOUNT_RE = re.compile(r"-?\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{2})")
+DATE_RE   = re.compile(r"\b(\d{1,2}[./-]\d{1,2}[./-]\d{2,4}|\d{4}[./-]\d{2}[./-]\d{2})\b")
+
 
 def parse_amount(raw: str) -> float | None:
-    """'1.234,56' veya '1234.56' formatlarını float'a çevirir."""
-    cleaned = re.sub(r"[^\d,\.]", "", raw)
-    # Türk formatı: nokta binlik, virgül ondalık
-    if "," in cleaned and "." in cleaned:
-        if cleaned.rfind(",") > cleaned.rfind("."):
-            cleaned = cleaned.replace(".", "").replace(",", ".")
+    s = raw.replace(" ", "")
+    if "," in s and "." in s:
+        if s.rfind(",") > s.rfind("."):
+            s = s.replace(".", "").replace(",", ".")
         else:
-            cleaned = cleaned.replace(",", "")
-    elif "," in cleaned:
-        cleaned = cleaned.replace(",", ".")
+            s = s.replace(",", "")
+    elif "," in s:
+        s = s.replace(",", ".")
     try:
-        return float(cleaned)
+        return float(s)
     except ValueError:
         return None
 
-DATE_RE = re.compile(
-    r"\b(\d{1,2}[./-]\d{1,2}[./-]\d{2,4}|\d{4}[./-]\d{2}[./-]\d{2})\b"
-)
-AMOUNT_RE = re.compile(
-    r"(-?\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{2}))"
-)
 
-def extract_from_pdf(file_bytes: bytes) -> List[Dict[str, Any]]:
-    transactions = []
+# ─── PDF Ayrıştırıcı ──────────────────────────────────────────────────────────
+def extract_transactions(file_bytes: bytes) -> List[Dict[str, Any]]:
+    results = []
     with pdfplumber.open(BytesIO(file_bytes)) as pdf:
         for page in pdf.pages:
             table = page.extract_table()
             if table:
-                for row in table[1:]:          # ilk satır başlık
-                    row = [str(c).strip() if c else "" for c in row]
-                    # Yeterince hücreli satırı işle
-                    if len(row) >= 3:
-                        date_col, desc_col, *rest = row
-                        date_match = DATE_RE.search(date_col)
-                        amounts = [parse_amount(r) for r in rest if AMOUNT_RE.search(r)]
-                        amount = next((a for a in amounts if a is not None), None)
-                        if desc_col and amount is not None:
-                            transactions.append({
-                                "date":        date_match.group() if date_match else date_col,
-                                "description": desc_col,
-                                "amount":      amount,
-                                "category":    categorize(desc_col),
-                            })
+                for row in table[1:]:
+                    cells = [str(c).strip() if c else "" for c in row]
+                    if len(cells) < 3:
+                        continue
+                    date_col, desc_col, *rest = cells
+                    dm = DATE_RE.search(date_col)
+                    amounts = [parse_amount(r) for r in rest if AMOUNT_RE.search(r)]
+                    amount = next((a for a in amounts if a is not None), None)
+                    if desc_col and amount is not None:
+                        cat, recurring = categorize_and_tag(desc_col)
+                        results.append({
+                            "date":        dm.group() if dm else date_col,
+                            "description": desc_col,
+                            "amount":      abs(amount),
+                            "category":    cat,
+                            "is_recurring":recurring,
+                            "source":      "pdf",
+                        })
             else:
-                # Tablo yoksa düz metin dene
                 text = page.extract_text() or ""
                 for line in text.splitlines():
-                    date_m = DATE_RE.search(line)
-                    amount_m = AMOUNT_RE.findall(line)
-                    if date_m and amount_m:
-                        # Tarihten sonraki kısmı açıklama say
-                        end = date_m.end()
-                        desc = line[end:].strip()
-                        # Son bulunan tutarı kullan
-                        amount = parse_amount(amount_m[-1])
+                    dm = DATE_RE.search(line)
+                    amounts = AMOUNT_RE.findall(line)
+                    if dm and amounts:
+                        desc = line[dm.end():].strip()
+                        amount = parse_amount(amounts[-1])
                         if desc and amount is not None:
-                            transactions.append({
-                                "date":        date_m.group(),
+                            cat, recurring = categorize_and_tag(desc)
+                            results.append({
+                                "date":        dm.group(),
                                 "description": desc,
-                                "amount":      amount,
-                                "category":    categorize(desc),
+                                "amount":      abs(amount),
+                                "category":    cat,
+                                "is_recurring":recurring,
+                                "source":      "pdf",
                             })
-    return transactions
+    return results
 
-# ─── DEMO – PDF yokken kullanılan sentetik veri ───────────────────────────────
-import random, datetime
 
-DEMO_DESCRIPTIONS = [
-    ("Migros Market", "Market & Gıda"),
-    ("Uber Taksi", "Ulaşım"),
-    ("Netflix Abonelik", "Eğlence"),
-    ("Elektrik Faturası", "Faturalar"),
-    ("Eczane Medikal", "Sağlık"),
-    ("Trendyol Alışveriş", "Alışveriş"),
-    ("Udemy Kurs", "Eğitim"),
-    ("Borsa İstanbul", "Yatırım & Finans"),
-    ("Pizza Hut", "Market & Gıda"),
-    ("Akbil Metro", "Ulaşım"),
-    ("Spotify Premium", "Eğlence"),
-    ("Doğalgaz Faturası", "Faturalar"),
-    ("Carrefour Market", "Market & Gıda"),
-    ("Bolt Driver", "Ulaşım"),
-    ("Biletix Sinema", "Eğlence"),
-    ("A101 Market", "Market & Gıda"),
+# ─── Fatura Yük Tahmini ────────────────────────────────────────────────────────
+def predict_bill_load(transactions: List[Dict]) -> float:
+    """Tekrarlayan işlemlerin toplamı = gelecek ay tahmini fatura yükü."""
+    return round(sum(t["amount"] for t in transactions if t.get("is_recurring")), 2)
+
+
+# ─── AI İçgörüler ─────────────────────────────────────────────────────────────
+def generate_insights(transactions: List[Dict], goals: List[Dict] | None = None) -> List[str]:
+    insights = []
+    from collections import defaultdict
+    cat_totals: Dict[str, float] = defaultdict(float)
+    for t in transactions:
+        cat_totals[t["category"]] += t["amount"]
+
+    total = sum(cat_totals.values()) or 1
+
+    if cat_totals.get("Yemek", 0) / total > 0.18:
+        saving = round(cat_totals["Yemek"] * 0.15)
+        insights.append(f"Dışarıda yemek harcamalarınız toplam harcamanızın %{cat_totals['Yemek']/total*100:.0f}'ini oluşturuyor. "
+                        f"%15 azaltırsan aylık ~{saving:,} TL tasarruf edersin.")
+
+    if cat_totals.get("Alışveriş", 0) > 2000:
+        insights.append(f"Bu dönem alışveriş harcamanız {cat_totals['Alışveriş']:,.0f} TL. "
+                        "Trendyol/Hepsiburada'da fiyat alarmı kurarak daha uygun fırsatlar yakalayabilirsin.")
+
+    recurring = [t for t in transactions if t.get("is_recurring")]
+    if len(recurring) > 5:
+        insights.append(f"{len(recurring)} aktif abonelik ve fatura tespit edildi. "
+                        "Kullanmadığın abonelikleri iptal ederek tasarruf sağlayabilirsin.")
+
+    if goals:
+        for goal in goals[:2]:
+            remaining = goal.get("target_amount", 0) - goal.get("saved_amount", 0)
+            monthly_save = total * 0.20  # %20 tasarruf senaryosu
+            if monthly_save > 0:
+                months = remaining / monthly_save
+                insights.append(f"'{goal['title']}' hedefine mevcut tasarruf hızıyla "
+                                 f"yaklaşık {months:.0f} ayda ulaşabilirsin.")
+
+    if not insights:
+        insights.append("Harcama düzeniniz genel olarak dengeli görünüyor. "
+                        "Düzenli bütçe takibi yapmaya devam edin!")
+    return insights
+
+
+# ─── Demo Veri Üretici ────────────────────────────────────────────────────────
+DEMO_ITEMS = [
+    ("Migros Market", "Market & Gıda", False, (80, 600)),
+    ("Türk Telekom Fatura", "Faturalar", True, (150, 300)),
+    ("Netflix Abonelik", "Abonelik", True, (100, 150)),
+    ("Uber Taksi", "Ulaşım", False, (50, 400)),
+    ("EnerjiSA Elektrik", "Faturalar", True, (200, 800)),
+    ("Trendyol Alışveriş", "Alışveriş", False, (100, 2000)),
+    ("Spotify Premium", "Abonelik", True, (50, 80)),
+    ("Yemeksepeti Sipariş", "Yemek", False, (80, 350)),
+    ("Shell Benzin", "Ulaşım", False, (300, 900)),
+    ("IGDAŞ Doğalgaz", "Faturalar", True, (150, 600)),
+    ("Eczane Medikal", "Sağlık", False, (30, 250)),
+    ("A101 Market", "Market & Gıda", False, (50, 400)),
+    ("Amazon Prime", "Abonelik", True, (70, 70)),
+    ("Biletix Sinema", "Eğlence", False, (60, 200)),
+    ("İstanbul Kart Yükleme", "Ulaşım", False, (50, 200)),
+    ("Doktor Vizite", "Sağlık", False, (100, 500)),
+    ("Çiçeksepeti", "Alışveriş", False, (80, 400)),
+    ("Disney+ Abonelik", "Abonelik", True, (70, 100)),
 ]
+
 
 def generate_demo_transactions(n: int = 30) -> List[Dict[str, Any]]:
     today = datetime.date.today()
-    txns = []
+    txns  = []
     for i in range(n):
-        desc, cat = random.choice(DEMO_DESCRIPTIONS)
+        desc, cat, recurring, (lo, hi) = random.choice(DEMO_ITEMS)
         txns.append({
-            "date":        str(today - datetime.timedelta(days=i * 2)),
+            "date":        str(today - datetime.timedelta(days=i)),
             "description": desc,
-            "amount":      round(random.uniform(10, 2500), 2),
+            "amount":      round(random.uniform(lo, hi), 2),
             "category":    cat,
+            "is_recurring":recurring,
+            "source":      "demo",
         })
     return txns
