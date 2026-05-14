@@ -1,33 +1,44 @@
 """
 FINARA Pro – FastAPI Ana Uygulama
-Global Exception Handler | CORS | JWT Auth | SQLAlchemy
+Global Exception Handler | CORS | JWT Auth | MongoDB (Motor)
 """
 
 import traceback
+from contextlib import asynccontextmanager
+from pathlib import Path
+
 from fastapi import FastAPI, Request, status
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 
 from config import get_settings
-from services.session import init_db
+from database import connect_db, close_db, seed_initial_data_if_empty
 
-# senin yapı: api/v1
-from api.v1 import auth, finance, goals, bills
+from api.v1 import auth, finance, goals, bills, limits, statement, export_routes
 
-
-# ─── Settings ────────────────────────────────────────────────────────────────
 settings = get_settings()
 
-# ─── App ─────────────────────────────────────────────────────────────────────
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    Path(settings.UPLOAD_DIR).mkdir(parents=True, exist_ok=True)
+    await connect_db()
+    await seed_initial_data_if_empty()
+    try:
+        yield
+    finally:
+        await close_db()
+
+
 app = FastAPI(
     title=settings.APP_NAME,
     version="2.0.0",
     description="AI Destekli Kişisel Finans ve Güvenlik Platformu",
     docs_url="/docs",
     redoc_url="/redoc",
+    lifespan=lifespan,
 )
 
-# ─── CORS ────────────────────────────────────────────────────────────────────
 app.add_middleware(
     CORSMiddleware,
     allow_origins=getattr(settings, "ALLOWED_ORIGINS", ["*"]),
@@ -36,7 +47,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ─── Global Exception Handler ───────────────────────────────────────────────
+
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     if getattr(settings, "DEBUG", True):
@@ -51,27 +62,21 @@ async def global_exception_handler(request: Request, exc: Exception):
     )
 
 
-# ─── Routers ────────────────────────────────────────────────────────────────
 PREFIX = "/api/v1"
 
-app.include_router(auth.router, prefix=f"{PREFIX}/auth", tags=["Auth"])
-app.include_router(finance.router, prefix=f"{PREFIX}/finance", tags=["Finance"])
-app.include_router(goals.router, prefix=f"{PREFIX}/goals", tags=["Goals"])
-app.include_router(bills.router, prefix=f"{PREFIX}/bills", tags=["Bills"])
+app.include_router(auth.router, prefix=f"{PREFIX}/auth")
+app.include_router(finance.router, prefix=f"{PREFIX}/finance")
+app.include_router(goals.router, prefix=f"{PREFIX}/goals")
+app.include_router(bills.router, prefix=f"{PREFIX}/bills")
+app.include_router(limits.router, prefix=f"{PREFIX}/limits")
+app.include_router(statement.router, prefix=PREFIX)
+app.include_router(export_routes.router, prefix=PREFIX)
 
 
-# ─── Startup ────────────────────────────────────────────────────────────────
-@app.on_event("startup")
-async def startup():
-    init_db()
-    print(f"✅ {settings.APP_NAME} başlatıldı – {PREFIX}")
-
-
-# ─── Health Check ────────────────────────────────────────────────────────────
 @app.get("/health")
 async def health():
     return {
         "status": "ok",
         "app": settings.APP_NAME,
-        "version": "2.0.0"
+        "version": "2.0.0",
     }

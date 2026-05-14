@@ -1,5 +1,8 @@
-from pydantic_settings import BaseSettings
 from functools import lru_cache
+from pathlib import Path
+
+from pydantic_settings import BaseSettings
+
 
 class Settings(BaseSettings):
     APP_NAME: str = "FINARA Pro"
@@ -8,15 +11,19 @@ class Settings(BaseSettings):
     # JWT
     SECRET_KEY: str = "finara-super-secret-key-change-in-production-2025"
     ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24  # 24 saat
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24
 
-    # DB
-    DATABASE_URL: str = "sqlite:///./finara.db"
+    # MongoDB (Motor)
+    MONGO_URI: str = "mongodb://localhost:27017"
+    MONGO_DB_NAME: str = "finara"
+
+    # Dosya yükleme
+    UPLOAD_DIR: str = str(Path(__file__).resolve().parent / "uploads")
 
     # Market API
-    EXCHANGE_API_KEY: str = "demo"           # exchangerate-api.com ücretsiz key
+    EXCHANGE_API_KEY: str = "demo"
     EXCHANGE_API_URL: str = "https://v6.exchangerate-api.com/v6"
-    MARKET_CACHE_TTL: int = 600              # 10 dakika (saniye)
+    MARKET_CACHE_TTL: int = 600
 
     # CORS
     ALLOWED_ORIGINS: list[str] = [
@@ -29,6 +36,7 @@ class Settings(BaseSettings):
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
+
 
 @lru_cache
 def get_settings() -> Settings:

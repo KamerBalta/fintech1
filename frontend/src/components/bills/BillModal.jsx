@@ -20,7 +20,7 @@ export default function BillModal() {
         <InputField label="Kategori" placeholder="Enerji, İletişim…"
           value={billForm.category} onChange={(e) => setBillForm({ category: e.target.value })} />
       </div>
-      <Button variant="primary" onClick={addBill} style={{ width: '100%', justifyContent: 'center', height: 40 }}>
+      <Button variant="primary" onClick={() => void addBill()} style={{ width: '100%', justifyContent: 'center', height: 40 }}>
         Fatura Ekle
       </Button>
     </Modal>

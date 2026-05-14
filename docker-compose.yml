@@ -1,0 +1,28 @@
+services:
+  mongo:
+    image: mongo:7
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    volumes:
+      - finara_mongo_data:/data/db
+
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      MONGO_URI: mongodb://mongo:27017
+      MONGO_DB_NAME: finara
+      UPLOAD_DIR: /app/uploads
+    volumes:
+      - finara_uploads:/app/uploads
+    depends_on:
+      - mongo
+
+volumes:
+  finara_mongo_data:
+  finara_uploads:

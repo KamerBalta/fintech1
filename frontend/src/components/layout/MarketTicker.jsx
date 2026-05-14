@@ -1,6 +1,6 @@
 import React from 'react'
 import useStore from '@/store/useStore'
-import { MOCK_MARKET } from '@/services/mockData'
+import { useMarket } from '@/hooks/useMarket'
 
 function TickerItem({ symbol, rate, change_pct }) {
   const up = change_pct >= 0
@@ -28,8 +28,21 @@ function TickerItem({ symbol, rate, change_pct }) {
 }
 
 export default function MarketTicker() {
+  useMarket(120000)
   const market = useStore((s) => s.market)
-  const items  = market.length ? market : MOCK_MARKET
+  const items = market.length ? market : []
+
+  if (!items.length) {
+    return (
+      <div style={{
+        background: 'var(--bg-1)', borderBottom: '1px solid var(--border)',
+        height: 38, display: 'flex', alignItems: 'center', justifyContent: 'center',
+        fontSize: 10, color: 'var(--t3)', flexShrink: 0,
+      }}>
+        Kur verisi yükleniyor…
+      </div>
+    )
+  }
 
   return (
     <div style={{

@@ -3,48 +3,48 @@ import useStore from '@/store/useStore'
 import { Card, SectionLabel, Button } from '@/components/ui'
 import BillModal from '@/components/bills/BillModal'
 import { fmt } from '@/utils/format'
-import { MOCK_BILLS } from '@/services/mockData'
 
 const BILL_ICONS = { İletişim: '📡', Enerji: '⚡', Abonelik: '📺', Kredi: '💳', Su: '💧', Sigorta: '🛡', Fatura: '📄' }
 
 function DaysBadge({ days }) {
+  const d = days ?? 99
   const [bg, color] =
-    days <= 5  ? ['var(--rd)',  'var(--red)'   ] :
-    days <= 10 ? ['var(--ad)', 'var(--amber)'  ] :
-                 ['var(--gd)', 'var(--green)'  ]
+  d <= 5
+    ? ['var(--rd)', 'var(--red)']
+    : d <= 10
+      ? ['var(--ad)', 'var(--amber)']
+      : ['var(--gd)', 'var(--green)']
   return (
     <span style={{ fontSize: 9, fontWeight: 700, padding: '3px 8px', borderRadius: 6, background: bg, color }}>
-      {days} gün
+      {d} gün
     </span>
   )
 }
 
 export default function BillsPage() {
   const { bills, billModal, openBillModal, markBillPaid } = useStore()
-  const bl = bills.length ? bills : MOCK_BILLS
+  const bl = bills || []
 
-  const totalMonth   = bl.reduce((a, b) => a + b.amount, 0)
-  const thisWeekAmt  = bl.filter((b) => b.days_until <= 7).reduce((a, b) => a + b.amount, 0)
+  const totalMonth = bl.reduce((a, b) => a + (b.amount || 0), 0)
+  const thisWeekAmt = bl.filter((b) => (b.days_until ?? 99) <= 7).reduce((a, b) => a + (b.amount || 0), 0)
 
   return (
     <div>
-      {/* Header */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 20 }}>
         <div>
           <h1 style={{ fontSize: 21, fontWeight: 800 }}>Fatura Takvimi</h1>
           <p style={{ fontSize: 11, color: 'var(--t3)', marginTop: 2 }}>
-            Düzenli ödemelerinizi takip edin
+            Faturalar API üzerinden yönetilir
           </p>
         </div>
         <Button variant="primary" onClick={openBillModal}>+ Fatura Ekle</Button>
       </div>
 
-      {/* Summary */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 12, marginBottom: 16 }}>
         {[
-          { label: 'Aylık Toplam',  value: `${fmt(totalMonth)} ₺`,  color: 'var(--t1)'    },
-          { label: 'Bu Hafta',      value: `${fmt(thisWeekAmt)} ₺`, color: 'var(--amber)' },
-          { label: 'Aktif Fatura',  value: bl.length,                color: 'var(--blue)'  },
+          { label: 'Aylık Toplam', value: `${fmt(totalMonth)} ₺`, color: 'var(--t1)' },
+          { label: 'Bu Hafta', value: `${fmt(thisWeekAmt)} ₺`, color: 'var(--amber)' },
+          { label: 'Aktif Fatura', value: bl.length, color: 'var(--blue)' },
         ].map((s) => (
           <div key={s.label} style={{ background: 'var(--bg-1)', border: '1px solid var(--border)', borderRadius: 16, padding: '16px 18px' }}>
             <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: '.08em', textTransform: 'uppercase', color: 'var(--t3)' }}>{s.label}</div>
@@ -53,7 +53,6 @@ export default function BillsPage() {
         ))}
       </div>
 
-      {/* Bill list */}
       <Card>
         <SectionLabel>Yaklaşan Ödemeler (Öncelik Sırasına Göre)</SectionLabel>
         {bl.map((b) => (
@@ -78,7 +77,7 @@ export default function BillsPage() {
                 <div style={{ fontSize: 15, fontWeight: 800 }}>{fmt(b.amount)} ₺</div>
                 <DaysBadge days={b.days_until} />
               </div>
-              <Button variant="ghost" size="sm" onClick={() => markBillPaid(b.id)}>
+              <Button variant="ghost" size="sm" onClick={() => void markBillPaid(b.id)}>
                 Ödendi ✓
               </Button>
             </div>

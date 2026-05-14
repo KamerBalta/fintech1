@@ -1,6 +1,6 @@
 from sqlalchemy import Column, Integer, String, Float, Boolean, DateTime, ForeignKey, func
 from sqlalchemy.orm import relationship
-from services.session import get_db
+
 from models.base import Base
 
 class Bill(Base):
