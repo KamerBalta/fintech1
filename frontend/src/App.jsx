@@ -1,4 +1,4 @@
-﻿import React from 'react'
+﻿import React, { useEffect } from 'react'
 import useStore from '@/store/useStore'
 
 // ─────────────────────────────────────────────────────────────
@@ -43,6 +43,12 @@ const PAGE_MAP = {
 export default function App() {
     const token = useStore((state) => state.token)
     const tab = useStore((state) => state.tab)
+
+    useEffect(() => {
+        if (token) {
+            void useStore.getState().hydrateSession()
+        }
+    }, [token])
 
     // kullanıcı giriş yapmadıysa
     if (!token) {

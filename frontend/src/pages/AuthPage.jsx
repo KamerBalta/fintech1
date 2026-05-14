@@ -75,7 +75,7 @@ export default function AuthPage() {
                 </Button>
 
                 <p style={{ textAlign: 'center', fontSize: 10, color: 'var(--t3)', marginTop: 14 }}>
-                    Herhangi bir e-posta & şifre ile demo olarak giriş yapabilirsiniz.
+                    Backend&apos;e bağlanır. Demo: demo@finara.local / demo123
                 </p>
             </div>
         </div>

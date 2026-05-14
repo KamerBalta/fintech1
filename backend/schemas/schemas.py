@@ -5,49 +5,55 @@ import datetime
 
 # ─── Auth ─────────────────────────────────────────────────────────────────────
 class UserRegister(BaseModel):
-    email:     EmailStr
+    email: EmailStr
     full_name: str = Field(min_length=2, max_length=100)
-    password:  str = Field(min_length=6)
+    password: str = Field(min_length=6)
+
 
 class UserLogin(BaseModel):
-    email:    EmailStr
+    email: EmailStr
     password: str
 
+
 class UserOut(BaseModel):
-    id:         int
-    email:      str
-    full_name:  str
+    id: str
+    email: str
+    full_name: str
     created_at: datetime.datetime
 
     class Config:
         from_attributes = True
 
+
 class TokenOut(BaseModel):
     access_token: str
-    token_type:   str = "bearer"
-    user:         UserOut
+    token_type: str = "bearer"
+    user: UserOut
 
 
 # ─── Transaction ──────────────────────────────────────────────────────────────
 class TransactionCreate(BaseModel):
-    date:        str
+    date: str
     description: str
-    amount:      float = Field(gt=0)
-    category:    str = "Diğer"
-    is_recurring:bool = False
+    amount: float = Field(gt=0)
+    category: str = "Diğer"
+    is_recurring: bool = False
+
 
 class TransactionOut(BaseModel):
-    id:           int
-    date:         str
-    description:  str
-    amount:       float
-    category:     str
+    id: str
+    date: str
+    description: str
+    amount: float
+    category: str
     is_recurring: bool
-    is_fraud:     bool
-    risk_score:   float
-    risk_level:   str
-    xai_reasons:  str
-    source:       str
+    is_fraud: bool
+    risk_score: float
+    risk_level: str
+    xai_reasons: str
+    source: str
+    is_anomaly: bool = False
+    statement_file: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -55,29 +61,31 @@ class TransactionOut(BaseModel):
 
 # ─── Goal ─────────────────────────────────────────────────────────────────────
 class GoalCreate(BaseModel):
-    title:         str = Field(min_length=1, max_length=100)
-    emoji:         str = "🎯"
+    title: str = Field(min_length=1, max_length=100)
+    emoji: str = "🎯"
     target_amount: float = Field(gt=0)
-    saved_amount:  float = Field(ge=0, default=0.0)
-    deadline:      Optional[str] = None
-    category:      str = "Genel"
+    saved_amount: float = Field(ge=0, default=0.0)
+    deadline: Optional[str] = None
+    category: str = "Genel"
+
 
 class GoalUpdate(BaseModel):
     saved_amount: Optional[float] = None
-    title:        Optional[str] = None
-    target_amount:Optional[float] = None
-    deadline:     Optional[str] = None
+    title: Optional[str] = None
+    target_amount: Optional[float] = None
+    deadline: Optional[str] = None
+
 
 class GoalOut(BaseModel):
-    id:            int
-    title:         str
-    emoji:         str
+    id: str
+    title: str
+    emoji: str
     target_amount: float
-    saved_amount:  float
-    deadline:      Optional[str]
-    category:      str
-    progress_pct:  float = 0.0
-    days_remaining:Optional[int] = None
+    saved_amount: float
+    deadline: Optional[str]
+    category: str
+    progress_pct: float = 0.0
+    days_remaining: Optional[int] = None
 
     class Config:
         from_attributes = True
@@ -85,32 +93,51 @@ class GoalOut(BaseModel):
 
 # ─── Bill ─────────────────────────────────────────────────────────────────────
 class BillCreate(BaseModel):
-    name:      str = Field(min_length=1, max_length=100)
-    amount:    float = Field(gt=0)
-    due_day:   int = Field(ge=1, le=31)
-    category:  str = "Fatura"
+    name: str = Field(min_length=1, max_length=100)
+    amount: float = Field(gt=0)
+    due_day: int = Field(ge=1, le=31)
+    category: str = "Fatura"
     last_paid: Optional[str] = None
 
+
 class BillOut(BaseModel):
-    id:        int
-    name:      str
-    amount:    float
-    due_day:   int
-    category:  str
+    id: str
+    name: str
+    amount: float
+    due_day: int
+    category: str
     is_active: bool
     last_paid: Optional[str]
-    days_until:Optional[int] = None
+    days_until: Optional[int] = None
 
     class Config:
         from_attributes = True
 
 
+# ─── Limits ───────────────────────────────────────────────────────────────────
+class LimitCreate(BaseModel):
+    category: str = Field(min_length=1, max_length=80)
+    monthly_cap: float = Field(gt=0)
+
+
+class LimitUpdate(BaseModel):
+    category: str | None = Field(default=None, min_length=1, max_length=80)
+    monthly_cap: float | None = Field(default=None, gt=0)
+
+
+class LimitOut(BaseModel):
+    id: str
+    category: str
+    monthly_cap: float
+
+
 # ─── Market ───────────────────────────────────────────────────────────────────
 class MarketRate(BaseModel):
-    symbol:     str
-    rate:       float
+    symbol: str
+    rate: float
     change_pct: float = 0.0
     updated_at: str
+
 
 class MarketDataOut(BaseModel):
     rates: List[MarketRate]
@@ -119,38 +146,43 @@ class MarketDataOut(BaseModel):
 
 # ─── PDF Upload ───────────────────────────────────────────────────────────────
 class PDFAnalysisOut(BaseModel):
-    success:            bool
-    transaction_count:  int
-    transactions:       List[TransactionOut]
+    success: bool
+    transaction_count: int
+    transactions: List[TransactionOut]
     category_breakdown: dict[str, float]
-    total_spending:     float
-    fraud_count:        int
-    recurring_count:    int
-    bill_forecast:      float
-    ai_insights:        List[str]
+    total_spending: float
+    fraud_count: int
+    recurring_count: int
+    bill_forecast: float
+    ai_insights: List[str]
+    statement_path: Optional[str] = None
 
 
 # ─── Chat ─────────────────────────────────────────────────────────────────────
 class ChatRequest(BaseModel):
-    message:           str = Field(min_length=1)
+    message: str = Field(min_length=1)
     financial_context: dict = {}
-    history:           List[dict] = []
+    history: List[dict] = []
+
 
 class ChatOut(BaseModel):
     success: bool
-    reply:   str
+    reply: str
 
 
 # ─── Insights ─────────────────────────────────────────────────────────────────
 class InsightsOut(BaseModel):
-    credit_score:      int
-    score_label:       str
-    total_assets:      float
-    monthly_income:    float
-    monthly_spending:  float
-    savings_rate:      float
-    risk_status:       str
-    active_alerts:     int
-    radar_data:        dict
+    credit_score: int
+    score_label: str
+    total_assets: float
+    monthly_income: float
+    monthly_spending: float
+    savings_rate: float
+    risk_status: str
+    active_alerts: int
+    radar_data: dict
     spending_forecast: List[dict]
-    goal_advice:       List[str]
+    goal_advice: List[str]
+    financial_health_score: float = 0.0
+    financial_health_label: str = ""
+    advisory_tips: List[str] = []

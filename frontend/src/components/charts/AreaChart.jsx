@@ -9,7 +9,8 @@ export default function AreaChart({ data = [], width = 520, height = 140 }) {
   if (!vals.length) return null
   const minV = Math.min(...vals) * 0.92
   const maxV = Math.max(...vals) * 1.05
-  const sx = (i) => (i / (data.length - 1)) * W
+  const denom = Math.max(1, data.length - 1)
+  const sx = (i) => (i / denom) * W
   const sy = (v) => H - ((v - minV) / (maxV - minV)) * H
   const predPts = data.map((d, i) => `${sx(i)},${sy(d.predicted)}`).join(' ')
   const actData = data.filter((d) => d.actual != null)

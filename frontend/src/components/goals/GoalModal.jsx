@@ -25,7 +25,7 @@ export default function GoalModal() {
         <InputField label="Son Tarih" type="date"
           value={goalForm.deadline} onChange={(e) => setGoalForm({ deadline: e.target.value })} />
       </div>
-      <Button variant="primary" onClick={addGoal} style={{ width: '100%', justifyContent: 'center', height: 40 }}>
+      <Button variant="primary" onClick={() => void addGoal()} style={{ width: '100%', justifyContent: 'center', height: 40 }}>
         Hedef Oluştur
       </Button>
     </Modal>

@@ -1,63 +1,83 @@
 import datetime
+
+from bson import ObjectId
+from bson.errors import InvalidId
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.orm import Session
 
-from services.session import get_db
-from models.bill import Bill
-from models.user import User
+from database import get_db
 from schemas.schemas import BillCreate, BillOut
-from services.security import get_current_user
+from services.security import get_current_user, MongoUser
 
-router = APIRouter(prefix="/bills", tags=["Bills"])
+router = APIRouter(tags=["Bills"])
 
 
-def _to_out(b: Bill) -> BillOut:
+def _to_out(b: dict) -> BillOut:
     today = datetime.date.today()
-    due   = datetime.date(today.year, today.month, min(b.due_day, 28))
+    due_day = int(b.get("due_day", 1))
+    due = datetime.date(today.year, today.month, min(due_day, 28))
     if due < today:
         if today.month == 12:
-            due = datetime.date(today.year + 1, 1, min(b.due_day, 28))
+            due = datetime.date(today.year + 1, 1, min(due_day, 28))
         else:
-            due = datetime.date(today.year, today.month + 1, min(b.due_day, 28))
+            due = datetime.date(today.year, today.month + 1, min(due_day, 28))
     days_until = (due - today).days
     return BillOut(
-        id=b.id, name=b.name, amount=b.amount,
-        due_day=b.due_day, category=b.category,
-        is_active=b.is_active, last_paid=b.last_paid,
+        id=str(b["_id"]),
+        name=b["name"],
+        amount=float(b.get("amount", 0)),
+        due_day=due_day,
+        category=b.get("category", "Fatura"),
+        is_active=bool(b.get("is_active", True)),
+        last_paid=b.get("last_paid"),
         days_until=days_until,
     )
 
 
 @router.get("/", response_model=list[BillOut])
-def list_bills(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    bills = db.query(Bill).filter(Bill.user_id == user.id, Bill.is_active == True).all()
-    return sorted([_to_out(b) for b in bills], key=lambda x: x.days_until)
+async def list_bills(db=Depends(get_db), user: MongoUser = Depends(get_current_user)):
+    bills = await db.bills.find({"user_id": user.id, "is_active": True}).to_list(500)
+    return sorted([_to_out(b) for b in bills], key=lambda x: x.days_until or 0)
 
 
 @router.post("/", response_model=BillOut, status_code=201)
-def create_bill(payload: BillCreate, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    bill = Bill(**payload.model_dump(), user_id=user.id)
-    db.add(bill)
-    db.commit()
-    db.refresh(bill)
-    return _to_out(bill)
+async def create_bill(
+    payload: BillCreate, db=Depends(get_db), user: MongoUser = Depends(get_current_user)
+):
+    from datetime import datetime, timezone
+
+    doc = {**payload.model_dump(), "user_id": user.id, "is_active": True, "created_at": datetime.now(timezone.utc)}
+    ins = await db.bills.insert_one(doc)
+    b = await db.bills.find_one({"_id": ins.inserted_id})
+    return _to_out(b)
 
 
 @router.patch("/{bill_id}/paid", response_model=BillOut)
-def mark_paid(bill_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    bill = db.query(Bill).filter(Bill.id == bill_id, Bill.user_id == user.id).first()
+async def mark_paid(
+    bill_id: str, db=Depends(get_db), user: MongoUser = Depends(get_current_user)
+):
+    try:
+        oid = ObjectId(bill_id)
+    except InvalidId:
+        raise HTTPException(status_code=404, detail="Fatura bulunamadı")
+    bill = await db.bills.find_one({"_id": oid, "user_id": user.id})
     if not bill:
         raise HTTPException(status_code=404, detail="Fatura bulunamadı")
-    bill.last_paid = str(datetime.date.today())
-    db.commit()
-    db.refresh(bill)
-    return _to_out(bill)
+    await db.bills.update_one(
+        {"_id": oid},
+        {"$set": {"last_paid": str(datetime.date.today())}},
+    )
+    b = await db.bills.find_one({"_id": oid})
+    return _to_out(b)
 
 
 @router.delete("/{bill_id}", status_code=204)
-def delete_bill(bill_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    bill = db.query(Bill).filter(Bill.id == bill_id, Bill.user_id == user.id).first()
-    if not bill:
+async def delete_bill(
+    bill_id: str, db=Depends(get_db), user: MongoUser = Depends(get_current_user)
+):
+    try:
+        oid = ObjectId(bill_id)
+    except InvalidId:
         raise HTTPException(status_code=404, detail="Fatura bulunamadı")
-    db.delete(bill)
-    db.commit()
+    res = await db.bills.delete_one({"_id": oid, "user_id": user.id})
+    if res.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Fatura bulunamadı")

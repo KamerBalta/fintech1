@@ -3,15 +3,14 @@ import useStore from '@/store/useStore'
 import { Card, SectionLabel, Button } from '@/components/ui'
 import DonutChart from '@/components/charts/DonutChart'
 import { fmt, CAT_COLORS } from '@/utils/format'
-import { MOCK_TRANSACTIONS, MOCK_CATEGORIES } from '@/services/mockData'
 
-const STEPS = ['Yükleniyor', 'Analiz Ediliyor', 'Kredi Skoru Güncelleniyor', 'Tamamlandı']
+const STEPS = ['Yükleniyor', 'Analiz Ediliyor', 'Kaydediliyor', 'Tamamlandı']
 
 function StepIndicator({ current }) {
   return (
     <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 0, marginBottom: 18 }}>
       {STEPS.map((label, i) => {
-        const done   = current > i
+        const done = current > i
         const active = current === i + 1
         return (
           <React.Fragment key={i}>
@@ -46,23 +45,35 @@ function StepIndicator({ current }) {
 }
 
 export default function PDFPage() {
-  const { uploadStep, pdfName, pdfInsights, billForecast, transactions, categories, loadDemoData, resetUpload } = useStore()
+  const {
+    uploadStep, pdfName, pdfInsights, billForecast, transactions, categories,
+    uploadBankPdf, resetUpload, uploadError,
+  } = useStore()
   const fileRef = useRef()
-  const isDragRef = useRef(false)
   const [dragOver, setDragOver] = React.useState(false)
+  const [localErr, setLocalErr] = React.useState('')
 
-  const cats  = Object.keys(categories).length ? categories : {}
-  const txns  = transactions.length ? transactions : []
+  const cats = Object.keys(categories || {}).length ? categories : {}
+  const txns = transactions?.length ? transactions : []
   const isDone = uploadStep === 3
+  const err = uploadError || localErr
+
+  const handleFile = async (file) => {
+    setLocalErr('')
+    try {
+      await uploadBankPdf(file)
+    } catch (e) {
+      setLocalErr(e.message || 'Yükleme başarısız')
+    }
+  }
 
   return (
     <div>
-      {/* Header */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 20 }}>
         <div>
           <h1 style={{ fontSize: 21, fontWeight: 800 }}>PDF Banka Ekstresi Analizi</h1>
           <p style={{ fontSize: 11, color: 'var(--t3)', marginTop: 2 }}>
-            Ekstrenizi yükleyin — AI harcamalarınızı otomatik kategorize etsin
+            PDF backend&apos;e gönderilir; işlemler MongoDB&apos;ye kaydedilir
           </p>
         </div>
         {isDone && (
@@ -70,15 +81,27 @@ export default function PDFPage() {
         )}
       </div>
 
-      {/* Step indicator */}
       {uploadStep > 0 && <StepIndicator current={uploadStep} />}
 
-      {/* Upload zone */}
+      {err && (
+        <div style={{
+          marginBottom: 14, padding: '10px 14px', borderRadius: 10,
+          background: 'var(--rd)', border: '1px solid rgba(255,77,106,.2)', color: 'var(--red)', fontSize: 11,
+        }}>
+          {err}
+        </div>
+      )}
+
       {!isDone && (
         <div
           onDragOver={(e) => { e.preventDefault(); setDragOver(true) }}
           onDragLeave={() => setDragOver(false)}
-          onDrop={(e) => { e.preventDefault(); setDragOver(false); loadDemoData() }}
+          onDrop={(e) => {
+            e.preventDefault()
+            setDragOver(false)
+            const f = e.dataTransfer.files?.[0]
+            if (f) void handleFile(f)
+          }}
           onClick={() => fileRef.current?.click()}
           style={{
             border: `2px dashed ${dragOver ? 'var(--green)' : 'var(--border)'}`,
@@ -87,33 +110,34 @@ export default function PDFPage() {
             transition: 'all .2s',
           }}
         >
-          <input ref={fileRef} type="file" accept=".pdf" style={{ display: 'none' }}
-            onChange={(e) => { if (e.target.files[0]) loadDemoData() }} />
+          <input
+            ref={fileRef}
+            type="file"
+            accept=".pdf"
+            style={{ display: 'none' }}
+            onChange={(e) => {
+              const f = e.target.files?.[0]
+              if (f) void handleFile(f)
+            }}
+          />
           <div style={{ fontSize: 48, marginBottom: 12 }}>📤</div>
           <div style={{ fontSize: 14, fontWeight: 700 }}>
             {pdfName || 'PDF dosyanızı sürükleyin veya tıklayın'}
           </div>
           <div style={{ fontSize: 11, color: 'var(--t3)', marginTop: 5 }}>
-            Banka ekstresi PDF dosyaları desteklenir
+            Yalnızca .pdf — tablo veya metin satırlarından işlem çıkarılır
           </div>
-          {uploadStep === 0 && (
-            <Button variant="ghost" size="sm"
-              onClick={(e) => { e.stopPropagation(); loadDemoData() }}
-              style={{ marginTop: 14 }}>
-              Demo Verisi Yükle
-            </Button>
-          )}
         </div>
       )}
 
-      {/* Results */}
       {isDone && (
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, marginTop: 4 }}>
-          {/* Donut + bill forecast */}
           <Card>
             <SectionLabel>Kategori Dağılımı</SectionLabel>
             <div style={{ marginTop: 12 }}>
-              <DonutChart data={cats} size={190} />
+              {Object.keys(cats).length ? <DonutChart data={cats} size={190} /> : (
+                <p style={{ fontSize: 11, color: 'var(--t3)' }}>Kategori verisi yok.</p>
+              )}
             </div>
             {billForecast > 0 && (
               <div style={{
@@ -126,10 +150,9 @@ export default function PDFPage() {
             )}
           </Card>
 
-          {/* AI insights + transactions */}
           <Card>
             <SectionLabel>AI İçgörüler</SectionLabel>
-            {pdfInsights.map((ins, i) => (
+            {(pdfInsights || []).map((ins, i) => (
               <div key={i} style={{
                 display: 'flex', gap: 8, padding: '9px 11px',
                 background: 'var(--bg-2)', borderRadius: 9, marginBottom: 6,

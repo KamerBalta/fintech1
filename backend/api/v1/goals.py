@@ -1,63 +1,88 @@
 import datetime
+
+from bson import ObjectId
+from bson.errors import InvalidId
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.orm import Session
 
-from services.session import get_db
-from models.goal import Goal
-from models.user import User
+from database import get_db
 from schemas.schemas import GoalCreate, GoalUpdate, GoalOut
-from services.security import get_current_user
+from services.security import get_current_user, MongoUser
 
-router = APIRouter(prefix="/goals", tags=["Goals"])
+router = APIRouter(tags=["Goals"])
 
 
-def _to_out(g: Goal) -> GoalOut:
-    pct = min(100.0, round(g.saved_amount / g.target_amount * 100, 1)) if g.target_amount else 0.0
+def _to_out(g: dict) -> GoalOut:
+    tgt = float(g.get("target_amount", 0))
+    saved = float(g.get("saved_amount", 0))
+    pct = min(100.0, round(saved / tgt * 100, 1)) if tgt else 0.0
     days = None
-    if g.deadline:
+    dl = g.get("deadline")
+    if dl:
         try:
-            delta = (datetime.date.fromisoformat(g.deadline) - datetime.date.today()).days
+            delta = (datetime.date.fromisoformat(str(dl)[:10]) - datetime.date.today()).days
             days = max(0, delta)
         except ValueError:
             pass
     return GoalOut(
-        id=g.id, title=g.title, emoji=g.emoji,
-        target_amount=g.target_amount, saved_amount=g.saved_amount,
-        deadline=g.deadline, category=g.category,
-        progress_pct=pct, days_remaining=days,
+        id=str(g["_id"]),
+        title=g["title"],
+        emoji=g.get("emoji", "🎯"),
+        target_amount=tgt,
+        saved_amount=saved,
+        deadline=g.get("deadline"),
+        category=g.get("category", "Genel"),
+        progress_pct=pct,
+        days_remaining=days,
     )
 
 
 @router.get("/", response_model=list[GoalOut])
-def list_goals(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    return [_to_out(g) for g in db.query(Goal).filter(Goal.user_id == user.id).all()]
+async def list_goals(db=Depends(get_db), user: MongoUser = Depends(get_current_user)):
+    goals = await db.goals.find({"user_id": user.id}).sort("created_at", -1).to_list(200)
+    return [_to_out(g) for g in goals]
 
 
 @router.post("/", response_model=GoalOut, status_code=201)
-def create_goal(payload: GoalCreate, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    goal = Goal(**payload.model_dump(), user_id=user.id)
-    db.add(goal)
-    db.commit()
-    db.refresh(goal)
-    return _to_out(goal)
+async def create_goal(
+    payload: GoalCreate, db=Depends(get_db), user: MongoUser = Depends(get_current_user)
+):
+    from datetime import datetime, timezone
+
+    doc = {**payload.model_dump(), "user_id": user.id, "created_at": datetime.now(timezone.utc)}
+    ins = await db.goals.insert_one(doc)
+    g = await db.goals.find_one({"_id": ins.inserted_id})
+    return _to_out(g)
 
 
 @router.patch("/{goal_id}", response_model=GoalOut)
-def update_goal(goal_id: int, payload: GoalUpdate, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    goal = db.query(Goal).filter(Goal.id == goal_id, Goal.user_id == user.id).first()
+async def update_goal(
+    goal_id: str,
+    payload: GoalUpdate,
+    db=Depends(get_db),
+    user: MongoUser = Depends(get_current_user),
+):
+    try:
+        oid = ObjectId(goal_id)
+    except InvalidId:
+        raise HTTPException(status_code=404, detail="Hedef bulunamadı")
+    goal = await db.goals.find_one({"_id": oid, "user_id": user.id})
     if not goal:
         raise HTTPException(status_code=404, detail="Hedef bulunamadı")
-    for k, v in payload.model_dump(exclude_none=True).items():
-        setattr(goal, k, v)
-    db.commit()
-    db.refresh(goal)
-    return _to_out(goal)
+    patch = {k: v for k, v in payload.model_dump(exclude_none=True).items()}
+    if patch:
+        await db.goals.update_one({"_id": oid}, {"$set": patch})
+    g = await db.goals.find_one({"_id": oid})
+    return _to_out(g)
 
 
 @router.delete("/{goal_id}", status_code=204)
-def delete_goal(goal_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    goal = db.query(Goal).filter(Goal.id == goal_id, Goal.user_id == user.id).first()
-    if not goal:
+async def delete_goal(
+    goal_id: str, db=Depends(get_db), user: MongoUser = Depends(get_current_user)
+):
+    try:
+        oid = ObjectId(goal_id)
+    except InvalidId:
         raise HTTPException(status_code=404, detail="Hedef bulunamadı")
-    db.delete(goal)
-    db.commit()
+    res = await db.goals.delete_one({"_id": oid, "user_id": user.id})
+    if res.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Hedef bulunamadı")

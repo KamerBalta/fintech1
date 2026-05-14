@@ -1,18 +1,29 @@
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
-from jose import JWTError, jwt
-from passlib.context import CryptContext
+
+from bson import ObjectId
+from bson.errors import InvalidId
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
-from sqlalchemy.orm import Session
+from jose import JWTError, jwt
+from passlib.context import CryptContext
+from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from config import get_settings
-from services.session import get_db
+from database import get_db
 
 settings = get_settings()
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
+
+
+@dataclass
+class MongoUser:
+    id: ObjectId
+    email: str
+    full_name: str
 
 
 def hash_password(password: str) -> str:
@@ -42,16 +53,19 @@ def decode_token(token: str) -> dict:
         )
 
 
-def get_current_user(
+async def get_current_user(
     token: str = Depends(oauth2_scheme),
-    db: Session = Depends(get_db),
-):
-    from models.user import User
+    db: AsyncIOMotorDatabase = Depends(get_db),
+) -> MongoUser:
     payload = decode_token(token)
-    user_id: str = payload.get("sub")
-    if user_id is None:
+    user_id = payload.get("sub")
+    if not user_id:
         raise HTTPException(status_code=401, detail="Kullanıcı bulunamadı")
-    user = db.query(User).filter(User.id == int(user_id)).first()
-    if user is None:
+    try:
+        oid = ObjectId(str(user_id))
+    except InvalidId:
         raise HTTPException(status_code=401, detail="Kullanıcı bulunamadı")
-    return user
+    doc = await db.users.find_one({"_id": oid})
+    if doc is None:
+        raise HTTPException(status_code=401, detail="Kullanıcı bulunamadı")
+    return MongoUser(id=doc["_id"], email=doc["email"], full_name=doc["full_name"])
