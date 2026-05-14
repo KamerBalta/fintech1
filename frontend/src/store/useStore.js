@@ -5,9 +5,29 @@ import { mapInsightsToHealth, mapAdvisoryTips } from '@/services/insightMappers'
 
 const emptyLimits = { usage: {}, alerts: [], violations: 0 }
 
+function categoriesFromTransactions(tx) {
+  const out = {}
+  for (const t of tx || []) {
+    const c = t.category || 'Diğer'
+    const a = Number(t.amount) || 0
+    out[c] = Math.round(((out[c] || 0) + a) * 100) / 100
+  }
+  return out
+}
+
 const useStore = create((set, get) => ({
   token: typeof localStorage !== 'undefined' ? localStorage.getItem('finara_token') : null,
   user: null,
+
+  toasts: [],
+  notify: (message, variant = 'success') => {
+    const id = `${Date.now()}-${Math.random()}`
+    set((s) => ({ toasts: [...s.toasts, { id, message, variant }] }))
+    setTimeout(() => {
+      set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) }))
+    }, 4200)
+  },
+  removeToast: (id) => set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })),
 
   login: async ({ email, password, full_name, isRegister }) => {
     const url = isRegister ? API.REGISTER : API.LOGIN
@@ -18,6 +38,7 @@ const useStore = create((set, get) => ({
     localStorage.setItem('finara_token', data.access_token)
     set({ token: data.access_token, user: data.user })
     await get().bootstrap()
+    get().notify(isRegister ? 'Hesap oluşturuldu.' : 'Giriş başarılı.', 'success')
   },
 
   logout: () => {
@@ -38,6 +59,9 @@ const useStore = create((set, get) => ({
       pdfName: null,
       uploadError: null,
       categories: {},
+      lastPdfUploadStats: null,
+      pdfInsights: [],
+      billForecast: 0,
     })
   },
 
@@ -76,8 +100,12 @@ const useStore = create((set, get) => ({
 
   saveLimit: async () => {
     const { limitForm } = get()
-    const amt = parseFloat(limitForm.amount)
-    if (!limitForm.category || !amt || amt <= 0) return
+    const raw = String(limitForm.amount ?? '').trim().replace(/\s/g, '').replace(',', '.')
+    const amt = parseFloat(raw)
+    if (!limitForm.category || !Number.isFinite(amt) || amt <= 0) {
+      get().notify('Geçerli bir kategori ve pozitif limit tutarı girin.', 'error')
+      return
+    }
     try {
       await fetchJson(API.LIMITS, {
         method: 'POST',
@@ -87,10 +115,41 @@ const useStore = create((set, get) => ({
       set({
         limits: analysis,
         limitModal: false,
-        limitForm: { category: 'Market & Gıda', amount: '' },
+        limitForm: { category: limitForm.category, amount: '' },
       })
+      get().notify('Limit kaydedildi.', 'success')
     } catch (e) {
-      window.alert(e.message)
+      get().notify(e.message || 'Limit kaydedilemedi.', 'error')
+    }
+  },
+
+  saveManualTotalAssets: async (inputValue, { clear } = { clear: false }) => {
+    try {
+      let manual = null
+      if (!clear) {
+        const raw = String(inputValue ?? '').trim().replace(/\s/g, '').replace(',', '.')
+        if (raw === '') {
+          get().notify('Tutar boş bırakılamaz. Otomatiğe dönmek için sıfırla kullanın.', 'error')
+          return
+        }
+        manual = parseFloat(raw)
+        if (!Number.isFinite(manual) || manual < 0) {
+          get().notify('Geçerli bir varlık tutarı girin (≥ 0).', 'error')
+          return
+        }
+      }
+      const insights = await fetchJson(API.MANUAL_TOTAL_ASSETS, {
+        method: 'PATCH',
+        body: { manual_total_assets: clear ? null : manual },
+      })
+      set({
+        insights,
+        advisories: mapAdvisoryTips(insights),
+        health: mapInsightsToHealth(insights),
+      })
+      get().notify(clear ? 'Otomatik varlık hesabına dönüldü.' : 'Toplam varlık kaydedildi.', 'success')
+    } catch (e) {
+      get().notify(e.message || 'Varlık güncellenemedi.', 'error')
     }
   },
 
@@ -105,9 +164,12 @@ const useStore = create((set, get) => ({
 
   addGoal: async () => {
     const { goalForm } = get()
-    const ta = parseFloat(goalForm.target_amount) || 0
-    if (!goalForm.title?.trim() || ta <= 0) return
-    const sa = parseFloat(goalForm.saved_amount) || 0
+    const ta = parseFloat(String(goalForm.target_amount ?? '').replace(',', '.')) || 0
+    if (!goalForm.title?.trim() || ta <= 0) {
+      get().notify('Başlık ve pozitif hedef tutarı zorunludur.', 'error')
+      return
+    }
+    const sa = parseFloat(String(goalForm.saved_amount ?? '0').replace(',', '.')) || 0
     try {
       const g = await fetchJson(API.GOALS, {
         method: 'POST',
@@ -125,14 +187,28 @@ const useStore = create((set, get) => ({
         goalModal: false,
         goalForm: { title: '', emoji: '🎯', target_amount: '', saved_amount: '0', deadline: '', category: '' },
       }))
+      get().notify('Hedef oluşturuldu.', 'success')
     } catch (e) {
-      window.alert(e.message)
+      get().notify(e.message || 'Hedef kaydedilemedi.', 'error')
+    }
+  },
+
+  deleteGoal: async (id) => {
+    try {
+      await fetchJson(API.goalById(id), { method: 'DELETE' })
+      set((s) => ({ goals: s.goals.filter((x) => String(x.id) !== String(id)) }))
+      get().notify('Hedef silindi.', 'success')
+    } catch (e) {
+      get().notify(e.message || 'Hedef silinemedi.', 'error')
     }
   },
 
   addToGoal: async (id, amount) => {
     const g = get().goals.find((x) => String(x.id) === String(id))
-    if (!g || amount <= 0) return
+    if (!g || amount <= 0) {
+      get().notify('Geçerli bir tutar girin.', 'error')
+      return
+    }
     const ns = g.saved_amount + amount
     try {
       const updated = await fetchJson(API.goalById(id), {
@@ -142,8 +218,9 @@ const useStore = create((set, get) => ({
       set((s) => ({
         goals: s.goals.map((x) => (String(x.id) === String(id) ? updated : x)),
       }))
+      get().notify('Birikim güncellendi.', 'success')
     } catch (e) {
-      window.alert(e.message)
+      get().notify(e.message || 'Güncelleme başarısız.', 'error')
     }
   },
 
@@ -158,7 +235,10 @@ const useStore = create((set, get) => ({
     const { billForm } = get()
     const dd = parseInt(billForm.due_day, 10) || 15
     const amt = parseFloat(billForm.amount) || 0
-    if (!billForm.name?.trim() || amt <= 0) return
+    if (!billForm.name?.trim() || amt <= 0) {
+      get().notify('Fatura adı ve pozitif tutar zorunludur.', 'error')
+      return
+    }
     try {
       const b = await fetchJson(API.BILLS, {
         method: 'POST',
@@ -174,8 +254,9 @@ const useStore = create((set, get) => ({
         billModal: false,
         billForm: { name: '', amount: '', due_day: '', category: 'Fatura' },
       }))
+      get().notify('Fatura eklendi.', 'success')
     } catch (e) {
-      window.alert(e.message)
+      get().notify(e.message || 'Fatura eklenemedi.', 'error')
     }
   },
 
@@ -185,8 +266,9 @@ const useStore = create((set, get) => ({
       set((s) => ({
         bills: s.bills.map((x) => (String(x.id) === String(id) ? b : x)),
       }))
+      get().notify('Ödeme kaydedildi.', 'success')
     } catch (e) {
-      window.alert(e.message)
+      get().notify(e.message || 'İşlem başarısız.', 'error')
     }
   },
 
@@ -197,6 +279,7 @@ const useStore = create((set, get) => ({
   uploadError: null,
   transactions: [],
   categories: {},
+  lastPdfUploadStats: null,
 
   uploadBankPdf: async (file) => {
     if (!file?.name?.toLowerCase().endsWith('.pdf')) {
@@ -227,24 +310,50 @@ const useStore = create((set, get) => ({
       throw new Error(msg)
     }
     const tx = data.transactions || []
-    const cats = data.category_breakdown || {}
+    try {
+      await get().bootstrap()
+    } catch (e) {
+      get().notify(e.message || 'Özet yenilenemedi; Dashboard kısmen güncel olabilir.', 'error')
+      const cur = get().transactions || []
+      const byId = new Map(cur.map((x) => [String(x.id), x]))
+      for (const t of tx) {
+        byId.set(String(t.id), t)
+      }
+      const merged = [...byId.values()].sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')))
+      set({
+        transactions: merged,
+        categories: categoriesFromTransactions(merged),
+      })
+    }
     set({
       uploadStep: 3,
       pdfInsights: data.ai_insights || [],
       billForecast: data.bill_forecast || 0,
       uploadError: null,
-      transactions: tx.length ? tx : get().transactions,
-      categories: Object.keys(cats).length ? cats : get().categories,
+      lastPdfUploadStats: {
+        inserted: data.transaction_count ?? 0,
+        skipped: data.skipped_duplicates ?? 0,
+      },
     })
-    try {
-      await get().bootstrap()
-    } catch {
-      /* bootstrap hatası yükleme sonucunu silmez */
-    }
+    const inserted = data.transaction_count ?? 0
+    const sk = data.skipped_duplicates ?? 0
+    get().notify(
+      sk > 0
+        ? `PDF tamamlandı: ${inserted} yeni işlem, ${sk} mükerrer atlandı. Dashboard güncellendi.`
+        : `PDF tamamlandı: ${inserted} işlem kaydedildi. Dashboard güncellendi.`,
+      'success',
+    )
   },
 
   resetUpload: () =>
-    set({ uploadStep: 0, pdfName: null, uploadError: null }),
+    set({
+      uploadStep: 0,
+      pdfName: null,
+      uploadError: null,
+      lastPdfUploadStats: null,
+      pdfInsights: [],
+      billForecast: 0,
+    }),
 
   fraudFilter: 'all',
   setFraudFilter: (f) => set({ fraudFilter: f }),
@@ -309,7 +418,7 @@ const useStore = create((set, get) => ({
         fetchJson(API.LIMIT_ANALYSIS).catch(() => emptyLimits),
         fetchJson(API.GOALS).catch(() => []),
         fetchJson(API.BILLS).catch(() => []),
-        fetchJson(API.TRANSACTIONS).catch(() => []),
+        fetchJson(`${API.TRANSACTIONS}?limit=1200`).catch(() => []),
       ])
       set({
         market: market.rates || [],
@@ -318,6 +427,7 @@ const useStore = create((set, get) => ({
         goals: Array.isArray(goals) ? goals : [],
         bills: Array.isArray(bills) ? bills : [],
         transactions: Array.isArray(tx) ? tx : [],
+        categories: categoriesFromTransactions(Array.isArray(tx) ? tx : []),
         advisories: mapAdvisoryTips(insights),
         health: mapInsightsToHealth(insights),
         insightsLoad: false,

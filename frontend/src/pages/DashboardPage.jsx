@@ -1,20 +1,31 @@
-import React from 'react'
+import React, { useEffect, useState } from 'react'
 import useStore from '@/store/useStore'
 import StatCard from '@/components/dashboard/StatCard'
 import AreaChart from '@/components/charts/AreaChart'
-import { Card, SectionLabel, ProgressBar, Button } from '@/components/ui'
+import { Card, SectionLabel, ProgressBar, Button, InputField } from '@/components/ui'
 import { fmt, fmtK, CAT_COLORS } from '@/utils/format'
 
 const emptyLimits = { usage: {}, alerts: [], violations: 0 }
 
 export default function DashboardPage() {
-    const { insights, limits, advisories, goals, bills, transactions, setTab, user } = useStore()
+    const { insights, limits, advisories, goals, transactions, setTab, user, saveManualTotalAssets } = useStore()
     const ins = insights
     const lim = limits || emptyLimits
     const advs = advisories || []
     const gl = goals || []
-    const bl = bills || []
     const fraudCount = transactions.filter((t) => t.is_fraud).length
+
+    const [assetDraft, setAssetDraft] = useState('')
+
+    useEffect(() => {
+        if (!ins) return
+        const m = ins.manual_total_assets
+        if (m !== null && m !== undefined && Number.isFinite(Number(m))) {
+            setAssetDraft(String(Number(m)))
+        } else {
+            setAssetDraft('')
+        }
+    }, [ins?.manual_total_assets])
 
     if (!ins) {
         return (
@@ -29,14 +40,18 @@ export default function DashboardPage() {
             ? ((ins.monthly_spending / ins.monthly_income) * 100).toFixed(1)
             : '—'
 
+    const hasManual = ins.manual_total_assets !== null && ins.manual_total_assets !== undefined
+    const computedHint =
+        typeof ins.total_assets_computed === 'number' ? ins.total_assets_computed : ins.total_assets
+
     return (
-        <div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 20 }}>
+        <div className="space-y-5 md:space-y-6">
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
                 <div>
                     <div style={{ fontSize: 11, color: 'var(--t3)' }}>Hoş geldiniz, {user?.full_name || 'Kullanıcı'} 👋</div>
                     <h1 style={{ fontSize: 21, fontWeight: 800 }}>Finansal Genel Bakış</h1>
                 </div>
-                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                <div className="flex flex-wrap gap-2">
                     {lim.violations > 0 && (
                         <button
                             type="button"
@@ -88,11 +103,22 @@ export default function DashboardPage() {
                 </div>
             </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 12, marginBottom: 16 }}>
+            {ins.analytics_period_label ? (
+                <div
+                    className="rounded-xl border px-4 py-3 text-[11px] leading-relaxed"
+                    style={{ borderColor: 'var(--border)', background: 'var(--bg-2)', color: 'var(--t2)' }}
+                >
+                    <span style={{ fontWeight: 800, color: 'var(--green)' }}>Ekstre dönemi:</span>{' '}
+                    {ins.analytics_period_label}. Üstteki aylık gelir/harcama bu ayın işlemlerine göre; harcama
+                    grafiği son ayların birleşik görünümüdür.
+                </div>
+            ) : null}
+
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4 xl:grid-cols-4">
                 <StatCard
                     label="Toplam Varlık"
                     value={`${fmt(ins.total_assets)} ₺`}
-                    sub="Canlı veritabanı"
+                    sub={hasManual ? 'Manuel değer' : 'Otomatik hesap'}
                     color="green"
                     spark={[62, 71, 68, 74, 80, 87]}
                 />
@@ -119,7 +145,35 @@ export default function DashboardPage() {
                 />
             </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 16 }}>
+            <Card className="!p-4 md:!p-5">
+                <SectionLabel>Manuel toplam varlık</SectionLabel>
+                <p style={{ fontSize: 10, color: 'var(--t3)', marginBottom: 12, lineHeight: 1.45 }}>
+                    Otomatik tahmin: <strong style={{ color: 'var(--t2)' }}>{fmt(computedHint)} ₺</strong>
+                    {hasManual ? ' — Şu an kartta manuel değer gösteriliyor.' : ''}
+                </p>
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:flex-wrap">
+                    <div className="min-w-0 flex-1 sm:max-w-xs">
+                        <InputField
+                            label="Toplam varlık (₺)"
+                            type="text"
+                            inputMode="decimal"
+                            placeholder="Örn. 450000"
+                            value={assetDraft}
+                            onChange={(e) => setAssetDraft(e.target.value)}
+                        />
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                        <Button variant="primary" onClick={() => void saveManualTotalAssets(assetDraft)}>
+                            Kaydet
+                        </Button>
+                        <Button variant="ghost" onClick={() => void saveManualTotalAssets('', { clear: true })}>
+                            Otomatiğe dön
+                        </Button>
+                    </div>
+                </div>
+            </Card>
+
+            <div className="grid grid-cols-1 gap-3 md:gap-4 lg:grid-cols-2">
                 <Card>
                     <SectionLabel>Harcama Trendi & Tahmin</SectionLabel>
                     <AreaChart data={ins.spending_forecast || []} />
@@ -203,7 +257,7 @@ export default function DashboardPage() {
                 </Card>
             </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <div className="grid grid-cols-1 gap-3 md:gap-4 lg:grid-cols-2">
                 <Card>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
                         <SectionLabel style={{ margin: 0 }}>Tasarruf Hedefleri</SectionLabel>

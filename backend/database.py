@@ -52,6 +52,11 @@ async def _ensure_indexes(db: AsyncIOMotorDatabase) -> None:
     await db.goals.create_index("user_id")
     await db.bills.create_index("user_id")
     await db.limits.create_index([("user_id", 1), ("category", 1)], unique=True)
+    await db.transactions.create_index(
+        [("user_id", 1), ("dedupe_key", 1)],
+        unique=True,
+        partialFilterExpression={"dedupe_key": {"$type": "string", "$gt": ""}},
+    )
 
 
 def _parse_float(val: str | None) -> float | None:

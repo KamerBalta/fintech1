@@ -134,7 +134,7 @@ async def create_or_replace_limit(
     if existing:
         await db.limits.update_one(
             {"_id": existing["_id"]},
-            {"$set": {"monthly_cap": payload.monthly_cap}},
+            {"$set": {"monthly_cap": float(payload.monthly_cap)}},
         )
         doc = await db.limits.find_one({"_id": existing["_id"]})
     else:
@@ -142,7 +142,7 @@ async def create_or_replace_limit(
             {
                 "user_id": user.id,
                 "category": payload.category,
-                "monthly_cap": payload.monthly_cap,
+                "monthly_cap": float(payload.monthly_cap),
                 "created_at": now,
             }
         )

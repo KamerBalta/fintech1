@@ -51,7 +51,7 @@ export default function MarketTicker() {
     }}>
       <div style={{ display: 'flex', animation: 'ticker 45s linear infinite', whiteSpace: 'nowrap' }}>
         {[...items, ...items].map((m, i) => (
-          <TickerItem key={i} {...m} />
+          <TickerItem key={`${m.symbol}-${i}`} {...m} />
         ))}
       </div>
     </div>

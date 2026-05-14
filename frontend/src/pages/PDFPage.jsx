@@ -47,7 +47,7 @@ function StepIndicator({ current }) {
 export default function PDFPage() {
   const {
     uploadStep, pdfName, pdfInsights, billForecast, transactions, categories,
-    uploadBankPdf, resetUpload, uploadError,
+    uploadBankPdf, resetUpload, uploadError, lastPdfUploadStats,
   } = useStore()
   const fileRef = useRef()
   const [dragOver, setDragOver] = React.useState(false)
@@ -131,9 +131,15 @@ export default function PDFPage() {
       )}
 
       {isDone && (
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, marginTop: 4 }}>
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2" style={{ marginTop: 4 }}>
           <Card>
-            <SectionLabel>Kategori Dağılımı</SectionLabel>
+            <SectionLabel>Kategori Dağılımı (tüm kayıtlı işlemler)</SectionLabel>
+            {lastPdfUploadStats != null && (
+              <p style={{ fontSize: 10, color: 'var(--t3)', marginBottom: 8 }}>
+                Son yükleme: {lastPdfUploadStats.inserted} yeni
+                {lastPdfUploadStats.skipped > 0 ? `, ${lastPdfUploadStats.skipped} mükerrer atlandı` : ''}.
+              </p>
+            )}
             <div style={{ marginTop: 12 }}>
               {Object.keys(cats).length ? <DonutChart data={cats} size={190} /> : (
                 <p style={{ fontSize: 11, color: 'var(--t3)' }}>Kategori verisi yok.</p>

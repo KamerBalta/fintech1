@@ -11,6 +11,7 @@ import MarketTicker from '@/components/layout/MarketTicker'
 // Dashboard Components
 // ─────────────────────────────────────────────────────────────
 import ChatWidget from '@/components/dashboard/ChatWidget'
+import Toaster from '@/components/ui/Toaster'
 
 // ─────────────────────────────────────────────────────────────
 // Pages
@@ -75,6 +76,7 @@ export default function App() {
                 style={{
                     marginLeft: 64,
                     flex: 1,
+                    minWidth: 0,
                     display: 'flex',
                     flexDirection: 'column',
                     minHeight: '100vh',
@@ -86,18 +88,20 @@ export default function App() {
                 {/* Dynamic Page */}
                 <main
                     key={tab}
+                    className="flex-1 min-w-0 overflow-x-hidden py-6 px-5 sm:px-7"
                     style={{
-                        flex: 1,
-                        padding: '22px 28px',
                         animation: 'fadeIn 0.25s ease',
                     }}
                 >
-                    <ActivePage />
+                    <div className="mx-auto w-full max-w-7xl">
+                        <ActivePage />
+                    </div>
                 </main>
             </div>
 
             {/* Floating AI Chat */}
             <ChatWidget />
+            <Toaster />
         </div>
     )
 }

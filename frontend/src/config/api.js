@@ -11,6 +11,7 @@ export const API = {
   TRANSACTIONS: `${BASE}/api/v1/finance/transactions`,
   FRAUD: `${BASE}/api/v1/finance/predict-fraud`,
   INSIGHTS: `${BASE}/api/v1/finance/user-insights`,
+  MANUAL_TOTAL_ASSETS: `${BASE}/api/v1/finance/manual-total-assets`,
   CHAT: `${BASE}/api/v1/finance/chat`,
   GOALS: `${BASE}/api/v1/goals/`,
   BILLS: `${BASE}/api/v1/bills/`,

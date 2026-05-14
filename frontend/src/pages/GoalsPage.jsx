@@ -23,7 +23,7 @@ export default function GoalsPage() {
       </div>
 
       {goals.length > 0 ? (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 14, marginBottom: 16 }}>
+        <div className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
           {goals.map((g) => <GoalCard key={g.id} goal={g} />)}
         </div>
       ) : (
