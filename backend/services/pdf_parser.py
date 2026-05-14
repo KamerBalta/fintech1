@@ -150,12 +150,35 @@ def generate_insights(transactions: List[Dict], goals: List[Dict] | None = None)
 
     if goals:
         for goal in goals[:2]:
-            remaining = goal.get("target_amount", 0) - goal.get("saved_amount", 0)
-            monthly_save = total * 0.20  # %20 tasarruf senaryosu
-            if monthly_save > 0:
-                months = remaining / monthly_save
-                insights.append(f"'{goal['title']}' hedefine mevcut tasarruf hızıyla "
-                                 f"yaklaşık {months:.0f} ayda ulaşabilirsin.")
+            title = goal.get("title", "Hedef")
+            tgt = float(goal.get("target_amount", 0) or 0)
+            saved = float(goal.get("saved_amount", 0) or 0)
+            remaining = tgt - saved
+            spend_total = sum(cat_totals.values())
+            hypothetical_monthly_save = max(spend_total, 0.0) * 0.20
+
+            if remaining <= 0:
+                insights.append(
+                    f"'{title}' hedef tutarına zaten ulaştınız veya birikiminiz hedefi aştı; "
+                    "tutarı güncellemek veya yeni bir hedef eklemek isteyebilirsiniz."
+                )
+            elif hypothetical_monthly_save <= 0:
+                insights.append(
+                    f"'{title}' hedefi için bu ekstrede yeterli harcama verisi yok; "
+                    "tasarruf planı oluşturmak için gelir ve giderlerinizi birlikte değerlendirin."
+                )
+            else:
+                months = remaining / hypothetical_monthly_save
+                if months < 0 or months > 600 or not (months == months):  # NaN guard
+                    insights.append(
+                        f"'{title}' hedefine mevcut harcama hızınızla ulaşmanız mümkün değil; "
+                        "tasarruf yapmanız gerekir."
+                    )
+                else:
+                    insights.append(
+                        f"'{title}' hedefine bu dönem harcamasına göre "
+                        f"yaklaşık {months:.0f} ayda ulaşabilirsin (ekstreden türetilen %20 tasarruf senaryosu)."
+                    )
 
     if not insights:
         insights.append("Harcama düzeniniz genel olarak dengeli görünüyor. "

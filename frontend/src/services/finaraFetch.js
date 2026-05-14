@@ -1,6 +1,10 @@
 function detailMessage(data) {
   const d = data?.detail
   if (typeof d === 'string') return d
+  if (d && typeof d === 'object' && !Array.isArray(d)) {
+    if (typeof d.message === 'string') return d.message
+    if (typeof d.msg === 'string') return d.msg
+  }
   if (Array.isArray(d)) return d.map((x) => x.msg || JSON.stringify(x)).join(', ')
   return null
 }

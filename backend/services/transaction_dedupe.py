@@ -18,6 +18,48 @@ def make_transaction_dedupe_key(date_str: str, amount: float, description: str, 
     return f"{d.isoformat()}|{amt}|{desc}"
 
 
+def dedupe_mongo_transaction_docs(docs: list[dict], *, prefer: str = "newest") -> list[dict]:
+    """
+    Aynı tarih + tutar + açıklama (veya kayıtlı dedupe_key) için tek kayıt bırakır.
+    prefer='newest': created_at en yeni olan tutulur (varsayılan).
+    """
+    if not docs:
+        return []
+
+    def created_ts(d: dict) -> float:
+        c = d.get("created_at")
+        if hasattr(c, "timestamp"):
+            return float(c.timestamp())
+        return 0.0
+
+    reverse = prefer == "newest"
+    sorted_docs = sorted(docs, key=created_ts, reverse=reverse)
+    seen: set[str] = set()
+    out: list[dict] = []
+    for d in sorted_docs:
+        dk = d.get("dedupe_key")
+        if isinstance(dk, str) and dk.strip():
+            key = dk.strip()
+        else:
+            key = make_transaction_dedupe_key(
+                str(d.get("date", "")),
+                float(d.get("amount", 0)),
+                str(d.get("description", "")),
+                d.get("raw_description"),
+            )
+        if key is None:
+            oid = str(d.get("_id", ""))
+            if oid and oid not in seen:
+                seen.add(oid)
+                out.append(d)
+            continue
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(d)
+    return out
+
+
 def dedupe_parsed_batch(rows: list[dict]) -> tuple[list[dict], int]:
     """Aynı PDF içinde tablo+metin çift çıkarma vb. için yerel mükerrer temizliği."""
     seen: set[str] = set()

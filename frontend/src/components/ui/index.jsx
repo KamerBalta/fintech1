@@ -2,6 +2,7 @@
 // Reusable primitive bileşenler
 
 import React from 'react'
+import { createPortal } from 'react-dom'
 import { clsx } from 'clsx'
 
 // ── Card ─────────────────────────────────────────────────────────────────────
@@ -111,19 +112,35 @@ export function Skeleton({ width = '100%', height = 20, className = '' }) {
 
 // ── Modal ────────────────────────────────────────────────────────────────────
 export function Modal({ title, onClose, children }) {
-  return (
-    <div className="fixed inset-0 z-[300] flex items-center justify-center animate-fadeIn"
-         style={{ background: 'rgba(0,0,0,.75)' }}
-         onClick={(e) => e.target === e.currentTarget && onClose()}>
-      <div className="rounded-[20px] p-7 w-[420px] max-h-[90vh] overflow-y-auto animate-slideUp"
-           style={{ background: 'var(--bg-1)', border: '1px solid var(--border)' }}>
-        <div className="flex justify-between items-center mb-5">
-          <span className="text-[15px] font-bold">{title}</span>
-          <button onClick={onClose} className="text-[18px] leading-none" style={{ color: 'var(--t3)' }}>×</button>
+  if (typeof document === 'undefined') return null
+  return createPortal(
+    <div
+      className="fixed inset-0 z-[500] flex items-center justify-center overflow-y-auto overflow-x-hidden p-4 animate-fadeIn"
+      style={{ background: 'rgba(2, 6, 23, 0.72)' }}
+      role="presentation"
+      onClick={(e) => e.target === e.currentTarget && onClose()}
+    >
+      <div
+        className="relative w-full max-w-md max-h-[min(90vh,560px)] overflow-y-auto rounded-2xl border border-slate-700/90 bg-slate-900/95 p-6 shadow-2xl shadow-black/40 backdrop-blur-md animate-slideUp"
+        role="dialog"
+        aria-modal="true"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="mb-5 flex items-center justify-between gap-3">
+          <span className="text-base font-semibold tracking-tight text-slate-100">{title}</span>
+          <button
+            type="button"
+            onClick={onClose}
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-lg leading-none text-slate-400 transition-colors hover:bg-slate-800 hover:text-slate-100"
+            aria-label="Kapat"
+          >
+            ×
+          </button>
         </div>
         {children}
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }
 

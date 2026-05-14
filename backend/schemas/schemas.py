@@ -15,11 +15,25 @@ class UserLogin(BaseModel):
     password: str
 
 
+class BankProfileOut(BaseModel):
+    bank_id: str
+    statement_day: Optional[int] = Field(default=None, ge=1, le=31)
+    monthly_credit_limit: Optional[float] = Field(default=None, ge=0)
+    display_name: Optional[str] = Field(default=None, max_length=100)
+
+
+class BankProfilesPatchBody(BaseModel):
+    """Kullanıcı banka profillerini tam liste olarak gönderir (üzerine yazar)."""
+
+    bank_profiles: List[BankProfileOut] = Field(default_factory=list)
+
+
 class UserOut(BaseModel):
     id: str
     email: str
     full_name: str
     created_at: datetime.datetime
+    bank_profiles: List[BankProfileOut] = []
 
     class Config:
         from_attributes = True
@@ -54,6 +68,8 @@ class TransactionOut(BaseModel):
     source: str
     is_anomaly: bool = False
     statement_file: Optional[str] = None
+    bank_id: str = "legacy"
+    bank_name: str = ""
 
     class Config:
         from_attributes = True
@@ -118,6 +134,7 @@ class BillOut(BaseModel):
 class LimitCreate(BaseModel):
     category: str = Field(min_length=1, max_length=80)
     monthly_cap: float = Field(gt=0)
+    bank_id: str = Field(default="all", min_length=1, max_length=40)
 
 
 class LimitUpdate(BaseModel):
@@ -129,6 +146,7 @@ class LimitOut(BaseModel):
     id: str
     category: str
     monthly_cap: float
+    bank_id: str = "all"
 
 
 # ─── Market ───────────────────────────────────────────────────────────────────
@@ -144,6 +162,19 @@ class MarketDataOut(BaseModel):
     cached: bool
 
 
+class SubscriptionRowOut(BaseModel):
+    label: str
+    monthly_estimate_try: float
+    sample_count: int
+    bank_id: Optional[str] = None
+    last_seen: Optional[str] = None
+
+
+class SubscriptionsSummaryOut(BaseModel):
+    items: List[SubscriptionRowOut]
+    monthly_total_try: float
+
+
 # ─── PDF Upload ───────────────────────────────────────────────────────────────
 class PDFAnalysisOut(BaseModel):
     success: bool
@@ -157,13 +188,19 @@ class PDFAnalysisOut(BaseModel):
     bill_forecast: float
     ai_insights: List[str]
     statement_path: Optional[str] = None
+    bank_id: str = "diger"
+    bank_display_name: str = ""
 
 
 # ─── Chat ─────────────────────────────────────────────────────────────────────
 class ChatRequest(BaseModel):
     message: str = Field(min_length=1)
-    financial_context: dict = {}
-    history: List[dict] = []
+    financial_context: dict = Field(default_factory=dict)
+    history: List[dict] = Field(default_factory=list)
+    bank_id: Optional[str] = Field(
+        default=None,
+        description="Yalnızca bu bankanın işlemleri; boş veya 'all' = tüm bankalar",
+    )
 
 
 class ChatOut(BaseModel):

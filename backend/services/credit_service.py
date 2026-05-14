@@ -12,6 +12,8 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.utils.dates import month_key, parse_txn_date, turkish_month_label
 from services import advisory_service, health_service
+from services.bank_slug import normalize_bank_id
+from services.transaction_dedupe import dedupe_mongo_transaction_docs
 
 INCOME_CATEGORIES = {"Maaş", "Gelir", "Transfer Girişi"}
 
@@ -19,7 +21,13 @@ AVG_DAYS_PER_MONTH = 30.4375
 HISTORY_DAYS = 1100
 
 
-async def get_user_insights(user_id: ObjectId, db: AsyncIOMotorDatabase) -> dict[str, Any]:
+async def get_user_insights(
+    user_id: ObjectId,
+    db: AsyncIOMotorDatabase,
+    bank_id: str | None = None,
+) -> dict[str, Any]:
+    if bank_id:
+        bank_id = normalize_bank_id(bank_id)
     today = dt.date.today()
     cutoff = today - dt.timedelta(days=HISTORY_DAYS)
 
@@ -39,8 +47,15 @@ async def get_user_insights(user_id: ObjectId, db: AsyncIOMotorDatabase) -> dict
         if focus_month:
             analytics_period_label = f"{turkish_month_label(focus_month)} ekstresi"
 
-    pairs: list[tuple[dict, dt.date]] = []
+    raw_docs: list[dict] = []
     async for doc in db.transactions.find({"user_id": user_id}):
+        raw_docs.append(doc)
+    docs = dedupe_mongo_transaction_docs(raw_docs, prefer="newest")
+    if bank_id:
+        docs = [d for d in docs if (d.get("bank_id") or "legacy") == bank_id]
+
+    pairs: list[tuple[dict, dt.date]] = []
+    for doc in docs:
         d = parse_txn_date(str(doc.get("date", "")))
         if d is None or d < cutoff:
             continue
@@ -129,7 +144,10 @@ async def get_user_insights(user_id: ObjectId, db: AsyncIOMotorDatabase) -> dict
     score += int(np.clip(savings_rate * 2.5, -80, 120))
     spend_ratio = monthly_spending / max(monthly_income, 1)
     score += int(np.clip(15 - min(spend_ratio * 40, 40), -40, 40))
-    anom = await db.transactions.count_documents({"user_id": user_id, "is_anomaly": True})
+    anom_q: dict[str, Any] = {"user_id": user_id, "is_anomaly": True}
+    if bank_id:
+        anom_q["bank_id"] = bank_id
+    anom = await db.transactions.count_documents(anom_q)
     score -= min(40, anom * 3)
     score = int(np.clip(score, 300, 850))
 
@@ -150,7 +168,14 @@ async def get_user_insights(user_id: ObjectId, db: AsyncIOMotorDatabase) -> dict
     if monthly_spending > monthly_income * 1.05:
         risk = "Yüksek"
 
-    total_assets_computed = round(monthly_income * 4 + max(0.0, savings_rate) * monthly_income * 0.5, 2)
+    # Tahmini varlık: mükerrersiz işlemlerden gelen harcama/gelir; gelirin kat kat üstü tahminleri önler.
+    surplus = max(0.0, monthly_income - monthly_spending)
+    total_assets_computed = round(
+        max(monthly_income * 1.2, monthly_spending * 2.0) + surplus * 8.0,
+        2,
+    )
+    _cap = max(120_000.0, monthly_spending * 12.0, monthly_income * 8.0)
+    total_assets_computed = round(min(total_assets_computed, _cap), 2)
 
     manual_raw = user_doc.get("manual_total_assets") if user_doc else None
     manual_total: float | None
@@ -185,13 +210,30 @@ async def get_user_insights(user_id: ObjectId, db: AsyncIOMotorDatabase) -> dict
 
     goal_advice: list[str] = []
     goals = await db.goals.find({"user_id": user_id}).to_list(10)
+    overspending = monthly_income > 0 and monthly_spending >= monthly_income
     for g in goals[:2]:
         rem = float(g.get("target_amount", 0)) - float(g.get("saved_amount", 0))
-        if rem > 0 and monthly_income > 0:
+        title = g.get("title", "Hedef")
+        if rem <= 0:
+            goal_advice.append(
+                f"'{title}' hedef tutarına ulaşıldı veya aşıldı; yeni bir hedef veya tutar güncellemesi düşünebilirsiniz."
+            )
+            continue
+        if overspending:
+            goal_advice.append(
+                f"'{title}' hedefine mevcut harcama hızınızla ulaşmanız mümkün değil; "
+                "tasarruf yapmanız gerekir."
+            )
+            continue
+        if monthly_income > 0:
             months = rem / max(monthly_income * 0.15, 1)
             goal_advice.append(
-                f"'{g.get('title')}' için kalan {rem:,.0f} TL; aylık %15 gelir ayırırsanız yaklaşık {months:.0f} ay."
+                f"'{title}' için kalan {rem:,.0f} TL; aylık %15 gelir ayırırsanız yaklaşık {months:.0f} ay."
             )
+
+    fraud_q: dict[str, Any] = {"user_id": user_id, "is_fraud": True}
+    if bank_id:
+        fraud_q["bank_id"] = bank_id
 
     return {
         "credit_score": score,
@@ -203,7 +245,7 @@ async def get_user_insights(user_id: ObjectId, db: AsyncIOMotorDatabase) -> dict
         "monthly_spending": monthly_spending,
         "savings_rate": savings_rate,
         "risk_status": risk,
-        "active_alerts": int(await db.transactions.count_documents({"user_id": user_id, "is_fraud": True})),
+        "active_alerts": int(await db.transactions.count_documents(fraud_q)),
         "radar_data": radar,
         "spending_forecast": forecast,
         "goal_advice": goal_advice[:8],

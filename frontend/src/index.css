@@ -4,28 +4,28 @@
 @tailwind utilities;
 
 :root {
-    --bg-0: #050d1a;
-    --bg-1: #0a1628;
-    --bg-2: #0f1f38;
-    --bg-3: #162540;
-    --border: #1c3050;
-    --border-hi: #264870;
-    --t1: #f0f4ff;
-    --t2: #8faec8;
-    --t3: #4d6b85;
-    --green: #00d68f;
-    --gd: rgba(0, 214, 143, 0.13);
-    --gg: rgba(0, 214, 143, 0.28);
-    --blue: #3b8bff;
-    --bd: rgba(59, 139, 255, 0.13);
-    --red: #ff4d6a;
-    --rd: rgba(255, 77, 106, 0.13);
-    --amber: #ffb429;
-    --ad: rgba(255, 180, 41, 0.13);
-    --purple: #9b6dff;
-    --pd: rgba(155, 109, 255, 0.13);
-    --cyan: #00cfe8;
-    --pink: #ff6b9d;
+    --bg-0: #080f18;
+    --bg-1: #0c1522;
+    --bg-2: #111c2e;
+    --bg-3: #182236;
+    --border: #1f2d42;
+    --border-hi: #2c3f56;
+    --t1: #e8edf7;
+    --t2: #94a8bc;
+    --t3: #5a6d82;
+    --green: #2dd4a3;
+    --gd: rgba(45, 212, 163, 0.1);
+    --gg: rgba(45, 212, 163, 0.22);
+    --blue: #5ba3ff;
+    --bd: rgba(91, 163, 255, 0.1);
+    --red: #f8718c;
+    --rd: rgba(248, 113, 140, 0.1);
+    --amber: #fbbf5c;
+    --ad: rgba(251, 191, 92, 0.1);
+    --purple: #a78bfa;
+    --pd: rgba(167, 139, 250, 0.1);
+    --cyan: #22d3ee;
+    --pink: #fb7185;
     font-family: 'Plus Jakarta Sans', system-ui, sans-serif;
 }
 
@@ -77,12 +77,10 @@ body {
 @keyframes fadeIn {
     from {
         opacity: 0;
-        transform: translateY(6px);
     }
 
     to {
         opacity: 1;
-        transform: none;
     }
 }
 

@@ -55,7 +55,7 @@ export default function PDFPage() {
 
   const cats = Object.keys(categories || {}).length ? categories : {}
   const txns = transactions?.length ? transactions : []
-  const isDone = uploadStep === 3
+  const isDone = uploadStep >= 4
   const err = uploadError || localErr
 
   const handleFile = async (file) => {

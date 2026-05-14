@@ -1,22 +1,25 @@
 """
-PDF ekstre yükleme — parse, mükerrer kontrolü, MongoDB'ye birleştirilmiş kayıt ve analiz özeti.
+PDF ekstre yükleme — banka tespiti, banka bazlı hash mükerrer kontrolü, MongoDB kayıt.
 """
 from __future__ import annotations
 
+import hashlib
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
 from bson import ObjectId
 from pymongo.errors import DuplicateKeyError
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 
-from app.utils.dates import parse_txn_date, turkish_month_label
+from app.utils.dates import parse_txn_date
 from config import get_settings
 from database import get_db, txn_doc_to_out
 from schemas.schemas import PDFAnalysisOut, TransactionOut
 from services import fraud_service
-from services import anomaly_service
+from services import anomaly_service, subscription_service
+from services.pdf_bank_sniff import sniff_bank_from_pdf_bytes
+from services.bank_slug import normalize_bank_id
 from services.pdf_processor import parse_bank_statement_pdf
 from services.pdf_parser import generate_insights, predict_bill_load
 from services.security import get_current_user
@@ -32,6 +35,7 @@ router = APIRouter(tags=["Statement"])
 @router.post("/upload-statement", response_model=PDFAnalysisOut)
 async def upload_statement(
     file: UploadFile = File(...),
+    force_overwrite: bool = Query(False, description="Aynı banka + aynı içerikli ekstre silinip yeniden işlensin."),
     db=Depends(get_db),
     user=Depends(get_current_user),
 ):
@@ -42,6 +46,53 @@ async def upload_statement(
     raw = await file.read()
     if not raw:
         raise HTTPException(status_code=400, detail="Boş dosya.")
+
+    content_hash = hashlib.sha256(raw).hexdigest()
+    content_md5 = hashlib.md5(raw).hexdigest()
+    orig_name = (file.filename or "").strip()[:240] or None
+    bank_raw, bank_display_name = sniff_bank_from_pdf_bytes(raw)
+    bank_id = normalize_bank_id(bank_raw)
+
+    dup_clauses = [{"content_hash": content_hash}, {"content_md5": content_md5}]
+    dup_scope = {"user_id": user.id, "bank_id": bank_id, "$or": dup_clauses}
+
+    if force_overwrite:
+        await db.transactions.delete_many(
+            {
+                "user_id": user.id,
+                "bank_id": bank_id,
+                "$or": [
+                    {"statement_content_hash": content_hash},
+                    {"statement_content_md5": content_md5},
+                ],
+            },
+        )
+        await db.statement_uploads.delete_many(dup_scope)
+    else:
+        dup = await db.statement_uploads.find_one(dup_scope)
+        if not dup:
+            dup = await db.transactions.find_one(
+                {
+                    "user_id": user.id,
+                    "bank_id": bank_id,
+                    "$or": [
+                        {"statement_content_hash": content_hash},
+                        {"statement_content_md5": content_md5},
+                    ],
+                },
+            )
+        if dup:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "duplicate_statement",
+                    "message": (
+                        f"Bu ekstre ({bank_display_name}) için aynı içerik zaten yüklü "
+                        f"(SHA-256 veya MD5 eşleşmesi). Üzerine yazmak için onaylayın."
+                    ),
+                    "bank_id": bank_id,
+                },
+            )
 
     parsed = parse_bank_statement_pdf(raw)
     if not parsed:
@@ -75,7 +126,9 @@ async def upload_statement(
             t.get("raw_description"),
         )
         if dedupe_key:
-            exists = await db.transactions.find_one({"user_id": user.id, "dedupe_key": dedupe_key})
+            exists = await db.transactions.find_one(
+                {"user_id": user.id, "bank_id": bank_id, "dedupe_key": dedupe_key},
+            )
             if exists:
                 db_dup_skips += 1
                 continue
@@ -94,6 +147,11 @@ async def upload_statement(
             "xai_reasons": t.get("xai_reasons", "[]"),
             "source": "pdf",
             "statement_file": rel_path,
+            "statement_content_hash": content_hash,
+            "statement_content_md5": content_md5,
+            "statement_original_filename": orig_name,
+            "bank_id": bank_id,
+            "bank_name": bank_display_name,
             "is_anomaly": False,
             "created_at": now,
         }
@@ -107,8 +165,8 @@ async def upload_statement(
             continue
 
     await anomaly_service.flag_anomalies_for_user(db, user.id)
+    await subscription_service.refresh_subscription_flags(db, user.id)
 
-    # Son yüklenen ekstre dönemi → dashboard odak ayı (tek aylık ekstre algısı)
     stmt_dates: list = []
     for row in enriched:
         d = parse_txn_date(str(row.get("date", "")))
@@ -124,6 +182,22 @@ async def upload_statement(
     else:
         user_update["analytics_focus_month"] = None
     await db.users.update_one({"_id": user.id}, {"$set": user_update})
+
+    udoc = await db.users.find_one({"_id": user.id}, {"bank_profiles": 1}) or {}
+    profiles = udoc.get("bank_profiles") or []
+    if not any(isinstance(p, dict) and p.get("bank_id") == bank_id for p in profiles):
+        await db.users.update_one(
+            {"_id": user.id},
+            {
+                "$push": {
+                    "bank_profiles": {
+                        "bank_id": bank_id,
+                        "statement_day": 15,
+                        "monthly_credit_limit": None,
+                    },
+                },
+            },
+        )
 
     saved_docs = await db.transactions.find({"_id": {"$in": saved_ids}}).to_list(len(saved_ids))
     id_order = {sid: i for i, sid in enumerate(saved_ids)}
@@ -145,6 +219,19 @@ async def upload_statement(
 
     skipped_total = batch_dup_skips + db_dup_skips
 
+    await db.statement_uploads.insert_one(
+        {
+            "user_id": user.id,
+            "bank_id": bank_id,
+            "content_hash": content_hash,
+            "content_md5": content_md5,
+            "original_filename": orig_name,
+            "statement_path": rel_path,
+            "transaction_count": len(saved_ids),
+            "created_at": now,
+        },
+    )
+
     return PDFAnalysisOut(
         success=True,
         transaction_count=len(saved_docs),
@@ -157,4 +244,6 @@ async def upload_statement(
         bill_forecast=bill_forecast,
         ai_insights=ai_insights,
         statement_path=rel_path,
+        bank_id=bank_id,
+        bank_display_name=bank_display_name,
     )

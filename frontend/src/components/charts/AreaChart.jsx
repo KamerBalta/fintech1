@@ -26,8 +26,8 @@ export default function AreaChart({ data = [], width = 520, height = 140 }) {
   const actPts  = actData.map((d, i) => `${sx(i)},${sy(d.actual)}`).join(' ')
 
   return (
-    <div>
-      <svg width="100%" viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="xMidYMid meet">
+    <div className="w-full min-w-0 max-w-full overflow-hidden">
+      <svg width="100%" viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="xMidYMid meet" className="block max-h-[200px]">
         <defs>
           <linearGradient id={predGradId} x1="0" y1="0" x2="0" y2="1">
             <stop offset="0%" stopColor="#00d68f" stopOpacity=".25" />

@@ -11,7 +11,9 @@ import MarketTicker from '@/components/layout/MarketTicker'
 // Dashboard Components
 // ─────────────────────────────────────────────────────────────
 import ChatWidget from '@/components/dashboard/ChatWidget'
+import BankDrawer from '@/components/layout/BankDrawer'
 import Toaster from '@/components/ui/Toaster'
+import { Toaster as HotToaster } from 'react-hot-toast'
 
 // ─────────────────────────────────────────────────────────────
 // Pages
@@ -64,12 +66,14 @@ export default function App() {
             style={{
                 display: 'flex',
                 minHeight: '100vh',
-                backgroundColor: '#0f172a',
-                color: '#ffffff',
+                backgroundColor: 'var(--bg-0)',
+                color: 'var(--t1)',
             }}
         >
             {/* Sidebar */}
             <Sidebar />
+
+            <BankDrawer />
 
             {/* Main Content */}
             <div
@@ -88,12 +92,12 @@ export default function App() {
                 {/* Dynamic Page */}
                 <main
                     key={tab}
-                    className="flex-1 min-w-0 overflow-x-hidden py-6 px-5 sm:px-7"
+                    className="flex-1 min-w-0 overflow-x-hidden py-5"
                     style={{
-                        animation: 'fadeIn 0.25s ease',
+                        animation: 'fadeIn 0.35s ease',
                     }}
                 >
-                    <div className="mx-auto w-full max-w-7xl">
+                    <div className="mx-auto w-full min-w-0 max-w-7xl">
                         <ActivePage />
                     </div>
                 </main>
@@ -102,6 +106,18 @@ export default function App() {
             {/* Floating AI Chat */}
             <ChatWidget />
             <Toaster />
+            <HotToaster
+                position="top-center"
+                toastOptions={{
+                    duration: 4200,
+                    style: {
+                        background: '#0f172a',
+                        color: '#e2e8f0',
+                        border: '1px solid #334155',
+                        fontSize: '13px',
+                    },
+                }}
+            />
         </div>
     )
 }
