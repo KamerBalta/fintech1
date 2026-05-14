@@ -10,7 +10,7 @@ const TABS = [
   { id: 'fraud',     icon: '🛡',  label: 'Fraud İzleme'   },
   { id: 'limits',    icon: '⚖️',  label: 'Limitler'       },
   { id: 'goals',     icon: '🎯',  label: 'Hedefler'       },
-  { id: 'bills',     icon: '📅',  label: 'Faturalar'      },
+  { id: 'bills',     icon: '📅',  label: 'Faturalar ve Abonelikler' },
 ]
 
 function NavBtn({ icon, label, active, onClick }) {
@@ -40,7 +40,7 @@ function NavBtn({ icon, label, active, onClick }) {
 }
 
 export default function Sidebar() {
-  const { tab, setTab, logout } = useStore()
+  const { tab, setTab, logout, setBankDrawerOpen } = useStore()
   const { exportExcel, exportPDF } = useExport()
 
   return (
@@ -67,6 +67,8 @@ export default function Sidebar() {
       ))}
 
       <div style={{ flex: 1 }} />
+
+      <NavBtn icon="👛" label="Bankalarım" active={false} onClick={() => setBankDrawerOpen(true)} />
 
       {/* Export buttons */}
       <NavBtn icon="📊" label="Excel İndir" active={false} onClick={exportExcel} />

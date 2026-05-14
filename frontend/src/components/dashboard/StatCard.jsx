@@ -1,30 +1,50 @@
 import React from 'react'
-import SparkBar from '@/components/charts/SparkBar'
+import { clsx } from 'clsx'
 
-const COLOR_MAP = {
-  green:  { css: 'var(--green)',  rgb: '0,214,143'   },
-  blue:   { css: 'var(--blue)',   rgb: '59,139,255'  },
-  amber:  { css: 'var(--amber)',  rgb: '255,180,41'  },
-  red:    { css: 'var(--red)',    rgb: '255,77,106'  },
-  purple: { css: 'var(--purple)', rgb: '155,109,255' },
+const VALUE_CLASS = {
+  green: 'text-emerald-300',
+  blue: 'text-sky-300',
+  amber: 'text-amber-300',
+  red: 'text-rose-300',
+  purple: 'text-violet-300',
 }
 
-export default function StatCard({ label, value, sub, color = 'green', spark = [] }) {
-  const c = COLOR_MAP[color] || COLOR_MAP.green
+/**
+ * Fintech KPI kartı — slate yüzey, net tipografi, Lucide ikon slotu.
+ */
+export default function StatCard({
+  label,
+  value,
+  sub,
+  color = 'green',
+  headerRight = null,
+  icon = null,
+  className = '',
+}) {
+  const valueClass = VALUE_CLASS[color] || VALUE_CLASS.green
 
   return (
-    <div style={{
-      background: 'var(--bg-1)', border: '1px solid var(--border)',
-      borderRadius: 16, padding: '16px 18px',
-    }}>
-      <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: '.08em', textTransform: 'uppercase', color: 'var(--t3)' }}>
-        {label}
+    <div
+      className={clsx(
+        'flex min-h-0 min-w-0 flex-col rounded-xl border border-slate-700/80 bg-slate-800/50 p-6 shadow-sm',
+        'transition-colors hover:border-slate-600/90 hover:bg-slate-800/70',
+        className,
+      )}
+    >
+      <div className="mb-4 flex items-start justify-between gap-3">
+        <div
+          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-slate-600/50 bg-slate-700/35 text-slate-200 [&>svg]:shrink-0"
+          aria-hidden
+        >
+          {icon}
+        </div>
+        {headerRight ? <div className="shrink-0 pt-0.5">{headerRight}</div> : null}
       </div>
-      <div style={{ fontSize: 22, fontWeight: 800, color: c.css, margin: '5px 0 1px', lineHeight: 1 }}>
+      <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">{label}</p>
+      <p className={clsx('mt-1.5 text-2xl font-bold tabular-nums tracking-tight text-slate-50 sm:text-[1.65rem]', valueClass)}>
         {value}
-      </div>
-      {spark.length > 0 && <SparkBar data={spark} color={c.css} height={32} />}
-      <div style={{ fontSize: 10, color: 'var(--t3)', marginTop: 4 }}>{sub}</div>
+      </p>
+      {sub ? <p className="mt-2 text-xs leading-relaxed text-slate-400">{sub}</p> : null}
     </div>
   )
 }

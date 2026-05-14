@@ -26,6 +26,8 @@ async def connect_db() -> None:
     _client = AsyncIOMotorClient(settings.MONGO_URI)
     db = _client[settings.MONGO_DB_NAME]
     await _ensure_indexes(db)
+    await _migrate_multi_bank_schema(db)
+    await _migrate_bank_slug_ids(db)
 
 
 async def close_db() -> None:
@@ -51,7 +53,90 @@ async def _ensure_indexes(db: AsyncIOMotorDatabase) -> None:
     await db.transactions.create_index([("user_id", 1), ("date", -1)])
     await db.goals.create_index("user_id")
     await db.bills.create_index("user_id")
-    await db.limits.create_index([("user_id", 1), ("category", 1)], unique=True)
+    # limits + txn dedupe benzersiz indeksleri _migrate_multi_bank_schema sonrası oluşturulur
+    await db.transactions.create_index([("user_id", 1), ("statement_content_hash", 1)])
+    await db.statement_uploads.create_index(
+        [("user_id", 1), ("bank_id", 1), ("content_hash", 1)],
+        name="stmt_user_bank_hash",
+    )
+    try:
+        await db.statement_uploads.create_index(
+            [("user_id", 1), ("bank_id", 1), ("content_md5", 1)],
+            name="stmt_user_bank_md5",
+        )
+    except Exception:
+        pass
+
+
+async def _migrate_bank_slug_ids(db: AsyncIOMotorDatabase) -> None:
+    """Eski / hatalı bank_id yazımlarını canonical slug'lara taşır."""
+    from services.bank_slug import normalize_bank_id
+
+    pairs = [
+        ("is-bankasi", "isbank"),
+        ("is_bankasi", "isbank"),
+        ("is_bank", "isbank"),
+        ("IsBank", "isbank"),
+        ("ISBANK", "isbank"),
+        ("yapi-kredi", "yapikredi"),
+        ("yapi_kredi", "yapikredi"),
+        ("YapiKredi", "yapikredi"),
+        ("ziraat-bankasi", "ziraat"),
+        ("garanti-bbva", "garanti"),
+    ]
+    for old, target in pairs:
+        nu = normalize_bank_id(target)
+        if old == nu:
+            continue
+        await db.transactions.update_many({"bank_id": old}, {"$set": {"bank_id": nu}})
+        await db.limits.update_many({"bank_id": old}, {"$set": {"bank_id": nu}})
+        await db.statement_uploads.update_many({"bank_id": old}, {"$set": {"bank_id": nu}})
+        await db.users.update_many(
+            {"bank_profiles.bank_id": old},
+            {"$set": {"bank_profiles.$[p].bank_id": nu}},
+            array_filters=[{"p.bank_id": old}],
+        )
+
+
+async def _migrate_multi_bank_schema(db: AsyncIOMotorDatabase) -> None:
+    """Eski kayıtlara bank_id / limits.bank_id ekler; indeks çakışmalarını tolere eder."""
+    await db.limits.update_many({"bank_id": {"$exists": False}}, {"$set": {"bank_id": "all"}})
+    await db.transactions.update_many(
+        {"bank_id": {"$exists": False}},
+        {"$set": {"bank_id": "legacy", "bank_name": "Eski kayıt"}},
+    )
+    await db.statement_uploads.update_many({"bank_id": {"$exists": False}}, {"$set": {"bank_id": "legacy"}})
+    try:
+        await db.transactions.drop_index("user_id_1_dedupe_key_1")
+    except Exception:
+        pass
+    try:
+        await db.statement_uploads.drop_index("user_id_1_content_hash_1")
+    except Exception:
+        pass
+    try:
+        await db.statement_uploads.drop_index("stmt_user_bank_hash")
+    except Exception:
+        pass
+    try:
+        await db.limits.drop_index("user_id_1_category_1")
+    except Exception:
+        pass
+    await db.transactions.create_index(
+        [("user_id", 1), ("bank_id", 1), ("dedupe_key", 1)],
+        unique=True,
+        partialFilterExpression={"dedupe_key": {"$type": "string", "$gt": ""}},
+        name="txn_user_bank_dedupe",
+    )
+    await db.limits.create_index(
+        [("user_id", 1), ("bank_id", 1), ("category", 1)],
+        unique=True,
+        name="lim_user_bank_cat",
+    )
+    await db.statement_uploads.create_index(
+        [("user_id", 1), ("bank_id", 1), ("content_hash", 1)],
+        name="stmt_user_bank_hash",
+    )
 
 
 def _parse_float(val: str | None) -> float | None:
@@ -106,6 +191,7 @@ async def seed_initial_data_if_empty() -> None:
                     "full_name": full_name,
                     "hashed_pw": hash_password(password),
                     "created_at": now,
+                    "bank_profiles": [],
                 }
             )
             email_to_oid[email] = res.inserted_id
@@ -135,6 +221,8 @@ async def seed_initial_data_if_empty() -> None:
                     "statement_file": None,
                     "is_anomaly": False,
                     "created_at": now,
+                    "bank_id": "legacy",
+                    "bank_name": "Eski kayıt",
                 }
             )
         elif rtype == "goal":
@@ -177,6 +265,7 @@ async def seed_initial_data_if_empty() -> None:
                         "user_id": uid,
                         "category": cat,
                         "monthly_cap": cap,
+                        "bank_id": "all",
                         "created_at": now,
                     }
                 )
@@ -189,15 +278,31 @@ def oid(s: str) -> ObjectId:
 
 
 def user_doc_to_out(doc: dict[str, Any]) -> dict[str, Any]:
+    from services.bank_slug import normalize_bank_id
+
+    profiles: list[dict[str, Any]] = []
+    for p in doc.get("bank_profiles") or []:
+        if isinstance(p, dict) and p.get("bank_id"):
+            profiles.append(
+                {
+                    "bank_id": normalize_bank_id(str(p["bank_id"])),
+                    "statement_day": p.get("statement_day"),
+                    "monthly_credit_limit": p.get("monthly_credit_limit"),
+                    "display_name": p.get("display_name"),
+                }
+            )
     return {
         "id": str(doc["_id"]),
         "email": doc["email"],
         "full_name": doc["full_name"],
         "created_at": doc.get("created_at") or dt.datetime.now(dt.timezone.utc),
+        "bank_profiles": profiles,
     }
 
 
 def txn_doc_to_out(doc: dict[str, Any]) -> dict[str, Any]:
+    from services.bank_slug import normalize_bank_id
+
     return {
         "id": str(doc["_id"]),
         "date": doc.get("date", ""),
@@ -212,4 +317,6 @@ def txn_doc_to_out(doc: dict[str, Any]) -> dict[str, Any]:
         "source": doc.get("source", "manual"),
         "is_anomaly": bool(doc.get("is_anomaly", False)),
         "statement_file": doc.get("statement_file"),
+        "bank_id": normalize_bank_id(doc.get("bank_id")) if doc.get("bank_id") not in (None, "") else "legacy",
+        "bank_name": doc.get("bank_name") or "",
     }

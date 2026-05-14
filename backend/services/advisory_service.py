@@ -7,6 +7,7 @@ from bson import ObjectId
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from services import market_service
+from services.transaction_dedupe import dedupe_mongo_transaction_docs
 
 
 async def generate_advisory(
@@ -39,8 +40,14 @@ async def generate_advisory(
         saved = float(g.get("saved_amount", 0))
         title = g.get("title", "Hedef")
         if tgt > 0:
-            pct = min(100.0, saved / tgt * 100)
             remaining = tgt - saved
+            if remaining <= 0:
+                tips.append(
+                    f"'{title}' hedef tutarına ulaşıldı veya birikim hedefi aştı; "
+                    "yeni bir hedef veya tutar güncellemesi düşünebilirsiniz."
+                )
+                continue
+            pct = min(100.0, saved / tgt * 100)
             if pct < 25:
                 tips.append(
                     f"'{title}' hedefinde ilerleme %{pct:.0f} seviyesinde. "
@@ -63,7 +70,8 @@ async def generate_advisory(
             if not cat or cap <= 0:
                 continue
             spent = 0.0
-            async for t in db.transactions.find({"user_id": user_id, "category": cat}):
+            rows = await db.transactions.find({"user_id": user_id, "category": cat}).to_list(800)
+            for t in dedupe_mongo_transaction_docs(rows, prefer="newest"):
                 ds = str(t.get("date", ""))
                 try:
                     d = date.fromisoformat(ds[:10])
