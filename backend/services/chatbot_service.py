@@ -1,41 +1,47 @@
 """
-Finansal AI Asistan — Anthropic veya OpenAI + veri bağlamı (Motor ile üretilir).
+Finansal AI Asistan — Google Gemini Flash + Motor bağlamı.
+Gemini hata verirse yanıt MongoDB özetinden üretilir (örnek mod yok).
 """
 from __future__ import annotations
 
-import os
+import asyncio
+import re
 from typing import Any
 
-import httpx
+import google.generativeai as genai
 
+from config import get_settings
 from services.chat_context_service import context_to_prompt_block
 
-ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
-ANTHROPIC_URL = "https://api.anthropic.com/v1/messages"
-OPENAI_URL = "https://api.openai.com/v1/chat/completions"
-ANTHROPIC_MODEL = os.getenv("ANTHROPIC_CHAT_MODEL", "claude-sonnet-4-20250514")
-OPENAI_MODEL = os.getenv("OPENAI_CHAT_MODEL", "gpt-4o-mini")
+# gemini-1.5-flash API'de kaldırıldı; ücretsiz katmanda çalışan modeller:
+# gemini-2.5-flash, gemini-flash-latest
+DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
 
-SYSTEM_PROMPT = """Sen FINARA adlı bir Türkçe konuşan AI Finansal Asistanısın. Kullanıcıya bankacılık uygulaması tonunda,
-net ve güven veren bir dille yardım edersin.
+SYSTEM_PROMPT = """Sen FINARA Finansal Asistanısın. Türkçe konuş; yanıtlar kısa, net ve rakam odaklı olsun.
+
+Veri kaynağı: Kullanıcı mesajından önce verilen JSON, MongoDB transactions koleksiyonundan üretilmiş GERÇEK veridir.
 
 Kurallar:
-- Konuşma dilin Türkçe olmalı.
-- Aşağıda verilen JSON bağlamı kullanıcının gerçek veritabanı özetidir. Harcama, limit, hedef ve ekstre rakamlarını
-  bu bağlamdan al; bağlamda olmayan tutar veya işlem uydurma. Eksik veri varsa bunu kısaca belirt.
-- "Bu ay markete ne kadar?", "en yüksek harcama" gibi sorularda bağlamdaki kategori toplamları ve
-  highest_spend_transaction / top_transactions alanlarına dayanarak kesin rakam ve tarih ver.
-- Bütçe tahmini ve limit uyarıları için spending_calendar_month_to_date.projected_month_total_linear ve
-  limits_mtd satırlarını kullan. Uygunsa proactive_alerts içindeki cümleleri doğal biçimde sohbete serpiştir.
-- Tasarruf önerilerinde mom_category_change_pct ve limits_mtd (limit vs harcama) kıyasını kullan.
-- Hedef sorularında goals ve insights.goal_advice alanlarını kullan; months_at_current_surplus ve
-  months_at_15pct_income tahminlerini açıkla.
-- goals[].currency_hint USD/EUR/GBP/XAU ise live_market.rates ile güncel kur/yorum yap (TRY bazlı hesap).
-- "Haftalık özet" istendiğinde last_7d_spending ve proactive_alerts üzerinden 4-6 maddelik madde işaretli özet ver.
-- Yanıtlar genelde 2-4 kısa paragraf; gerekiyorsa madde işaretleri kullan.
-- JSON veya kod bloğu ile ham bağlamı tekrar yazma; düz metin sohbet üret.
+- Tutarları yalnızca JSON'dan al; uydurma.
+- Market/gıda: spending_calendar_month_to_date.by_category.
+- En yüksek harcama: highest_spend_transaction_this_month.
+- 1-3 kısa paragraf veya madde listesi; ham JSON tekrarlama.
+- dismissed_subscriptions: kullanıcının kaldırdığı abonelikler; bunlar hakkında tavsiye verme.
 """
+
+
+def _google_api_key() -> str:
+    return (get_settings().GOOGLE_API_KEY or "").strip()
+
+
+def _gemini_model_name() -> str:
+    return (get_settings().GEMINI_MODEL or DEFAULT_GEMINI_MODEL).strip()
+
+
+def _configure_genai() -> None:
+    key = _google_api_key()
+    if key:
+        genai.configure(api_key=key)
 
 
 def _norm_history(history: list[dict[str, Any]] | None) -> list[dict[str, str]]:
@@ -49,7 +55,7 @@ def _norm_history(history: list[dict[str, Any]] | None) -> list[dict[str, str]]:
         content = str(m.get("content", "")).strip()
         if content:
             out.append({"role": role, "content": content})
-    out = out[-12:]
+    out = out[-10:]
     while out and out[0]["role"] == "assistant":
         out = out[1:]
     fixed: list[dict[str, str]] = []
@@ -64,119 +70,102 @@ def _norm_history(history: list[dict[str, Any]] | None) -> list[dict[str, str]]:
 def _merge_client_context(server_ctx: dict[str, Any], client_ctx: dict[str, Any] | None) -> dict[str, Any]:
     if not client_ctx:
         return server_ctx
-    merged = {**server_ctx, "client_notes": client_ctx}
-    return merged
+    return {**server_ctx, "client_notes": client_ctx}
 
 
-async def _call_anthropic(context_block: str, user_message: str, history: list[dict[str, str]]) -> str:
-    messages = [
-        *[{"role": m["role"], "content": m["content"]} for m in history],
-        {"role": "user", "content": f"{context_block}\n\n---\nKullanıcı sorusu:\n{user_message}"},
-    ]
-    async with httpx.AsyncClient(timeout=60) as client:
-        resp = await client.post(
-            ANTHROPIC_URL,
-            headers={
-                "x-api-key": ANTHROPIC_API_KEY,
-                "anthropic-version": "2023-06-01",
-                "content-type": "application/json",
-            },
-            json={
-                "model": ANTHROPIC_MODEL,
-                "max_tokens": 1200,
-                "system": SYSTEM_PROMPT,
-                "messages": messages,
-            },
-        )
-        resp.raise_for_status()
-        return str(resp.json()["content"][0]["text"])
+def _history_to_gemini_contents(history: list[dict[str, str]]) -> list[dict[str, Any]]:
+    contents: list[dict[str, Any]] = []
+    for m in history:
+        role = "user" if m["role"] == "user" else "model"
+        contents.append({"role": role, "parts": [m["content"]]})
+    return contents
 
 
-async def _call_openai(context_block: str, user_message: str, history: list[dict[str, str]]) -> str:
-    oai_messages: list[dict[str, Any]] = [
-        {"role": "system", "content": SYSTEM_PROMPT},
-        *[{"role": m["role"], "content": m["content"]} for m in history],
-        {"role": "user", "content": f"{context_block}\n\n---\nKullanıcı sorusu:\n{user_message}"},
-    ]
-    async with httpx.AsyncClient(timeout=60) as client:
-        resp = await client.post(
-            OPENAI_URL,
-            headers={"Authorization": f"Bearer {OPENAI_API_KEY}", "content-type": "application/json"},
-            json={"model": OPENAI_MODEL, "messages": oai_messages, "temperature": 0.35, "max_tokens": 1200},
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        return str(data["choices"][0]["message"]["content"])
-
-
-def _mock_from_context(user_message: str, ctx: dict[str, Any]) -> str:
+def _answer_from_context(user_message: str, ctx: dict[str, Any]) -> str:
+    """Gemini kullanılamadığında MongoDB bağlamından gerçek rakamlarla yanıt."""
     low = user_message.lower()
-    mtd = (ctx.get("spending_calendar_month_to_date") or {}).get("total", 0)
-    by_cat = (ctx.get("spending_calendar_month_to_date") or {}).get("by_category") or {}
-    market = ctx.get("live_market") or {}
-    rates = market.get("rates") if isinstance(market, dict) else None
-    goals = ctx.get("goals") or []
+    mtd = ctx.get("spending_calendar_month_to_date") or {}
+    by_cat: dict[str, float] = mtd.get("by_category") or {}
+    total_mtd = float(mtd.get("total") or 0)
 
-    lines = [
-        "(API anahtarı tanımlı değil — örnek moddasın; gerçek AI yanıtı için ANTHROPIC_API_KEY veya OPENAI_API_KEY ekle.)",
-        "",
-    ]
-
-    if "markete" in low or "market harcam" in low or "gıda" in low:
+    if any(x in low for x in ("market", "markete", "gıda", "gida", "bakkal")):
         grocery = 0.0
-        for k, v in by_cat.items():
-            kl = (k or "").lower()
+        hits: list[str] = []
+        for cat, amt in by_cat.items():
+            kl = (cat or "").lower()
             if any(x in kl for x in ("market", "gıda", "gida", "bakkal", "supermarket")):
-                grocery += float(v)
-        if grocery > 0:
-            lines.append(
-                f"Bu ay (takvim ayı, bugüne kadar) market / gıda benzeri kategorilerde toplam: {grocery:,.2f} TL."
+                grocery += float(amt)
+                hits.append(f"{cat}: {amt:,.2f} TL")
+        if hits:
+            return (
+                f"Bu ay (bugüne kadar) market / gıda benzeri harcamalarınız toplam **{grocery:,.2f} TL**.\n"
+                + "\n".join(f"• {h}" for h in hits)
             )
-        elif by_cat:
-            lines.append(
-                f"Bu ay bugüne kadar toplam harcama {mtd:,.0f} TL. Market/gıda satırı bağlamda ayrılmamışsa kategori isimlerine bak."
+        if by_cat:
+            lines = [f"• {c}: {a:,.2f} TL" for c, a in list(by_cat.items())[:8]]
+            return (
+                f"Market adıyla eşleşen kategori bulunamadı. Bu ay toplam harcama **{total_mtd:,.2f} TL**. "
+                f"Kategori özeti:\n" + "\n".join(lines)
             )
-        else:
-            lines.append(f"Bu ay bugüne kadar harcama kaydı (gelir hariç) görünmüyor veya MTD: {mtd:,.0f} TL.")
+        return "Bu ay için henüz harcama kaydı görünmüyor; PDF ekstre yükleyebilirsiniz."
 
-    if "yüksek" in low or "fazla" in low or "en çok" in low:
+    if any(x in low for x in ("yüksek", "en çok", "en fazla")):
         hi = ctx.get("highest_spend_transaction_this_month")
         if hi:
-            lines.append(
-                f"Bu ayın şu ana kadarki en yüksek tek harcaması: {hi['amount']:,.2f} TL — "
+            return (
+                f"Bu ayın şu ana kadarki en yüksek harcamanız **{hi['amount']:,.2f} TL** — "
                 f"{hi.get('description', '')} ({hi.get('category')}, {hi.get('date')})."
-            )
-
-    if "tatil" in low or "hedef" in low:
-        for g in goals[:2]:
-            lines.append(
-                f"Hedef '{g.get('title')}': {g.get('saved_amount')} / {g.get('target_amount')} TL; "
-                f"kalan {g.get('remaining')} TL. Tahmini süre (mevcut fazla): {g.get('months_at_current_surplus')} ay."
             )
 
     if "özet" in low or "haftalık" in low:
         wk = ctx.get("last_7d_spending") or {}
-        lines.append("Son 7 gün (bağlamdan):")
-        lines.append(f"- Toplam harcama: {wk.get('total', 0):,.0f} TL")
+        lines = [f"• Son 7 gün toplam: **{float(wk.get('total', 0)):,.2f} TL**"]
+        for c, a in list((wk.get("by_category") or {}).items())[:6]:
+            lines.append(f"• {c}: {a:,.2f} TL")
+        for a in (ctx.get("proactive_alerts") or [])[:3]:
+            lines.append(f"• {a}")
+        return "Haftalık özet:\n" + "\n".join(lines)
 
-    if "kur" in low or "dolar" in low or "euro" in low or "altın" in low:
-        if rates:
-            lines.append("Güncel kurlar (özet): " + ", ".join(f"{r.get('symbol')}={r.get('rate')}" for r in rates[:4]))
+    if total_mtd > 0:
+        top = list(by_cat.items())[:5]
+        lines = [f"• {c}: {a:,.2f} TL" for c, a in top]
+        return (
+            f"Bu ay bugüne kadar toplam harcamanız **{total_mtd:,.2f} TL**.\n"
+            + "Öne çıkan kategoriler:\n"
+            + "\n".join(lines)
+        )
+    return "Finansal kayıt bulunamadı. Önce PDF ekstre yükleyin veya işlem ekleyin."
 
-    for a in (ctx.get("proactive_alerts") or [])[:2]:
-        lines.append(f"Not: {a}")
 
-    if len(lines) <= 2:
-        tips = (ctx.get("insights") or {}).get("advisory_tips") or []
-        if tips:
-            lines.append("Öneri: " + str(tips[0]))
-        else:
-            lines.append(
-                f"Özet: Bu ay MTD harcama {mtd:,.0f} TL. Finansal veriler bağlamda; sorunu detaylandırırsan "
-                "rakamlarla yanıtlayabilirim."
-            )
+def _call_gemini_sync(context_block: str, user_message: str, history: list[dict[str, str]]) -> str:
+    _configure_genai()
+    model = genai.GenerativeModel(
+        _gemini_model_name(),
+        system_instruction=SYSTEM_PROMPT,
+    )
+    contents = _history_to_gemini_contents(history)
+    final_user = (
+        f"{context_block}\n\n---\nKullanıcı sorusu: {user_message}\n"
+        "Yanıtı yalnızca yukarıdaki verilere dayanarak ver."
+    )
+    contents.append({"role": "user", "parts": [final_user]})
 
-    return "\n".join(lines)
+    response = model.generate_content(
+        contents,
+        generation_config={"temperature": 0.2, "max_output_tokens": 1024, "top_p": 0.9},
+    )
+    text = getattr(response, "text", None)
+    if text:
+        return str(text).strip()
+    if response.candidates:
+        parts = response.candidates[0].content.parts
+        if parts and getattr(parts[0], "text", None):
+            return str(parts[0].text).strip()
+    return ""
+
+
+async def _call_gemini(context_block: str, user_message: str, history: list[dict[str, str]]) -> str:
+    return await asyncio.to_thread(_call_gemini_sync, context_block, user_message, history)
 
 
 async def chat_with_assistant(
@@ -186,11 +175,38 @@ async def chat_with_assistant(
     client_context: dict[str, Any] | None = None,
 ) -> str:
     merged = _merge_client_context(server_context, client_context)
+    msg = user_message.strip()
+    if not msg:
+        return "Lütfen bir soru yazın."
+
+    if not _google_api_key():
+        return _answer_from_context(msg, merged)
+
     block = context_to_prompt_block(merged)
     hist = _norm_history(history)
 
-    if ANTHROPIC_API_KEY:
-        return await _call_anthropic(block, user_message, hist)
-    if OPENAI_API_KEY:
-        return await _call_openai(block, user_message, hist)
-    return _mock_from_context(user_message, merged)
+    try:
+        reply = await asyncio.wait_for(
+            _call_gemini(block, msg, hist),
+            timeout=90.0,
+        )
+        if reply:
+            return reply
+    except asyncio.TimeoutError:
+        pass
+    except Exception as exc:
+        err = str(exc).lower()
+        if "404" in err and "not found" in err:
+            pass
+        elif "resourceexhausted" in err or "429" in err or "quota" in err:
+            pass
+        else:
+            m = re.search(r"message['\"]?\s*:\s*['\"]([^'\"]+)", str(exc))
+            if m and len(m.group(1)) < 200:
+                return (
+                    f"AI servisi şu an yanıt veremedi ({m.group(1)}). "
+                    "Aşağıda veritabanı özetiniz:\n\n"
+                    + _answer_from_context(msg, merged)
+                )
+
+    return _answer_from_context(msg, merged)

@@ -5,3 +5,5 @@ obj/
 __pycache__/
 node_modules/
 venv/
+.env
+backend/.env

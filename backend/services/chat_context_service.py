@@ -20,12 +20,6 @@ from services.transaction_dedupe import dedupe_mongo_transaction_docs
 
 INCOME_CATEGORIES = credit_service.INCOME_CATEGORIES
 
-_RECURRING_HINT = re.compile(
-    r"abonelik|subscription|netflix|spotify|youtube|apple|google\s*one|fatura|dijital",
-    re.I,
-)
-
-
 def _bank_ok(doc: dict, bank_id: str | None) -> bool:
     if not bank_id:
         return True
@@ -37,10 +31,11 @@ def _is_spending(doc: dict) -> bool:
 
 
 def _looks_recurring(doc: dict) -> bool:
-    if bool(doc.get("is_recurring")):
+    from services.subscription_service import is_subscription
+
+    if bool(doc.get("is_recurring")) and is_subscription(doc):
         return True
-    cat = (doc.get("category") or "") + " " + (doc.get("description") or "")
-    return bool(_RECURRING_HINT.search(cat))
+    return is_subscription(doc)
 
 
 def _goal_currency_hint(title: str, category: str) -> str | None:
@@ -280,6 +275,10 @@ async def build_financial_assistant_context(
     except Exception:
         market_block = None
 
+    from services.subscription_service import get_dismissed_subscription_labels
+
+    dismissed_subs = await get_dismissed_subscription_labels(db, user_id)
+
     return {
         "as_of": today.isoformat(),
         "calendar_month_label": mk_now,
@@ -337,17 +336,29 @@ async def build_financial_assistant_context(
         "flagged_anomalies_sample": anomaly_brief,
         "proactive_alerts": proactive,
         "live_market": market_block,
+        "dismissed_subscriptions": dismissed_subs,
     }
 
 
 def context_to_prompt_block(ctx: dict[str, Any]) -> str:
-    """LLM için tek metin bloğu (Türkçe etiketler)."""
+    """LLM için tek metin bloğu — transactions özet + ay içi harcama."""
+    mtd = ctx.get("spending_calendar_month_to_date") or {}
+    by_cat = mtd.get("by_category") or {}
+    month_label = ctx.get("calendar_month_label") or ctx.get("as_of", "")
+    summary_lines = [
+        f"Takvim ayı ({month_label}) bugüne kadar toplam harcama: {mtd.get('total', 0):,.2f} TL",
+        "Kategori kırılımı (MongoDB transactions, gelir hariç):",
+    ]
+    for cat, amt in list(by_cat.items())[:25]:
+        summary_lines.append(f"  - {cat}: {amt:,.2f} TL")
+    summary = "\n".join(summary_lines)
     try:
         blob = json.dumps(ctx, ensure_ascii=False, indent=2)
     except Exception:
         blob = str(ctx)
     return (
-        "Aşağıdaki JSON kullanıcının gerçek MongoDB verilerinden üretilmiş finansal bağlamdır. "
-        "Sorulara yanıt verirken bu sayıları esas al; uydurma.\n\n"
+        "=== Bu ayın gerçek harcama özeti (MongoDB) ===\n"
+        f"{summary}\n\n"
+        "=== Tam finansal bağlam (JSON) ===\n"
         f"{blob}"
     )

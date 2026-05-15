@@ -22,7 +22,20 @@ export async function fetchJson(url, options = {}) {
   }
   if (token) headers.Authorization = `Bearer ${token}`
 
-  const res = await fetch(url, { ...options, headers, body })
+  let res
+  try {
+    res = await fetch(url, { ...options, headers, body })
+  } catch (err) {
+    const hint =
+      import.meta.env?.DEV && !import.meta.env?.VITE_API_URL
+        ? ' Backend çalışıyor mu? (uvicorn) ve Vite proxy için sayfayı yenileyin.'
+        : ' Sunucuya ulaşılamadı; backend ve ağ bağlantısını kontrol edin.'
+    throw new Error(
+      err?.message === 'Failed to fetch'
+        ? `API bağlantısı kurulamadı.${hint}`
+        : err?.message || 'Ağ hatası',
+    )
+  }
   if (res.status === 204) return null
   const text = await res.text()
   let data = null

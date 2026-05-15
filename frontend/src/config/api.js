@@ -1,5 +1,8 @@
 // ─── API Configuration ─────────────────────────────────────────────────────
-const BASE = import.meta.env?.VITE_API_URL ?? 'http://localhost:8000'
+// Geliştirmede Vite proxy (/api → :8000) CORS sorunlarını önler
+const BASE =
+  import.meta.env?.VITE_API_URL ??
+  (import.meta.env.DEV ? '' : 'http://localhost:8000')
 
 export const API = {
   BASE,
@@ -10,6 +13,7 @@ export const API = {
   MARKET: `${BASE}/api/v1/finance/market-data`,
   BANKS: `${BASE}/api/v1/finance/banks`,
   SUBSCRIPTIONS: `${BASE}/api/v1/finance/subscriptions`,
+  subscriptionById: (id) => `${BASE}/api/v1/subscriptions/${id}`,
   UPLOAD: `${BASE}/api/v1/upload-statement`,
   TRANSACTIONS: `${BASE}/api/v1/finance/transactions`,
   FRAUD: `${BASE}/api/v1/finance/predict-fraud`,

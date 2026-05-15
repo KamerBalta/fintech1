@@ -25,6 +25,10 @@ class Settings(BaseSettings):
     EXCHANGE_API_URL: str = "https://v6.exchangerate-api.com/v6"
     MARKET_CACHE_TTL: int = 600
 
+    # Google Gemini (Finansal Asistan)
+    GOOGLE_API_KEY: str = ""
+    GEMINI_MODEL: str = "gemini-2.5-flash"
+
     # CORS
     ALLOWED_ORIGINS: list[str] = [
         "http://localhost:3000",
@@ -34,7 +38,7 @@ class Settings(BaseSettings):
     ]
 
     class Config:
-        env_file = ".env"
+        env_file = str(Path(__file__).resolve().parent / ".env")
         env_file_encoding = "utf-8"
 
 

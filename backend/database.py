@@ -53,6 +53,8 @@ async def _ensure_indexes(db: AsyncIOMotorDatabase) -> None:
     await db.transactions.create_index([("user_id", 1), ("date", -1)])
     await db.goals.create_index("user_id")
     await db.bills.create_index("user_id")
+    await db.subscriptions.create_index([("user_id", 1), ("merchant_key", 1)])
+    await db.subscriptions.create_index([("user_id", 1), ("is_active", 1)])
     # limits + txn dedupe benzersiz indeksleri _migrate_multi_bank_schema sonrası oluşturulur
     await db.transactions.create_index([("user_id", 1), ("statement_content_hash", 1)])
     await db.statement_uploads.create_index(

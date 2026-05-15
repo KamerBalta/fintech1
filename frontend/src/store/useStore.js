@@ -327,6 +327,29 @@ const useStore = create((set, get) => ({
     }
   },
 
+  fetchSubscriptions: async () => {
+    const bid = get().selectedBankId
+    const url = bid ? `${API.SUBSCRIPTIONS}?bank_id=${encodeURIComponent(bid)}` : API.SUBSCRIPTIONS
+    const subs = await fetchJson(url)
+    set({
+      subscriptions: Array.isArray(subs?.items) ? subs.items : [],
+      subscriptionMonthlyTotal: Number(subs?.monthly_total_try) || 0,
+    })
+    return subs
+  },
+
+  removeSubscription: async (id) => {
+    await fetchJson(API.subscriptionById(id), { method: 'DELETE' })
+    set((s) => {
+      const next = s.subscriptions.filter((x) => String(x.id) !== String(id))
+      return {
+        subscriptions: next,
+        subscriptionMonthlyTotal: next.reduce((a, x) => a + (Number(x.monthly_estimate_try) || 0), 0),
+      }
+    })
+    get().notify('Abonelik başarıyla kaldırıldı.', 'success')
+  },
+
   uploadStep: 0,
   pdfName: null,
   pdfInsights: [],
