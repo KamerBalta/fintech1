@@ -14,7 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from config import get_settings
 from database import connect_db, close_db, seed_initial_data_if_empty
 
-from api.v1 import auth, finance, goals, bills, limits, statement, export_routes
+from api.v1 import auth, finance, goals, bills, limits, statement, export_routes, subscriptions
 
 settings = get_settings()
 
@@ -69,6 +69,7 @@ app.include_router(finance.router, prefix=f"{PREFIX}/finance")
 app.include_router(goals.router, prefix=f"{PREFIX}/goals")
 app.include_router(bills.router, prefix=f"{PREFIX}/bills")
 app.include_router(limits.router, prefix=f"{PREFIX}/limits")
+app.include_router(subscriptions.router, prefix=f"{PREFIX}/subscriptions")
 app.include_router(statement.router, prefix=PREFIX)
 app.include_router(export_routes.router, prefix=PREFIX)
 

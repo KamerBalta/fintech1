@@ -163,11 +163,13 @@ class MarketDataOut(BaseModel):
 
 
 class SubscriptionRowOut(BaseModel):
+    id: str
     label: str
     monthly_estimate_try: float
     sample_count: int
     bank_id: Optional[str] = None
     last_seen: Optional[str] = None
+    is_active: bool = True
 
 
 class SubscriptionsSummaryOut(BaseModel):

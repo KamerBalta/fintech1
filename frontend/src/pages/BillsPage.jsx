@@ -1,8 +1,9 @@
-import React from 'react'
+import React, { useEffect } from 'react'
 import { Receipt, Repeat2 } from 'lucide-react'
 import useStore from '@/store/useStore'
 import { Card, SectionLabel, Button } from '@/components/ui'
 import BillModal from '@/components/bills/BillModal'
+import SubscriptionRow from '@/components/bills/SubscriptionRow'
 import { fmt } from '@/utils/format'
 
 const BILL_ICONS = { İletişim: '📡', Enerji: '⚡', Abonelik: '📺', Kredi: '💳', Su: '💧', Sigorta: '🛡', Fatura: '📄' }
@@ -23,9 +24,26 @@ function DaysBadge({ days }) {
 }
 
 export default function BillsPage() {
-  const { bills, billModal, openBillModal, markBillPaid, subscriptions, subscriptionMonthlyTotal } = useStore()
+  const {
+    bills,
+    billModal,
+    openBillModal,
+    markBillPaid,
+    subscriptions,
+    subscriptionMonthlyTotal,
+    fetchSubscriptions,
+    removeSubscription,
+    tab,
+  } = useStore()
+
   const bl = bills || []
   const subs = subscriptions || []
+
+  useEffect(() => {
+    if (tab === 'bills') {
+      void fetchSubscriptions().catch(() => {})
+    }
+  }, [tab, fetchSubscriptions])
 
   const totalMonth = bl.reduce((a, b) => a + (b.amount || 0), 0)
   const thisWeekAmt = bl.filter((b) => (b.days_until ?? 99) <= 7).reduce((a, b) => a + (b.amount || 0), 0)
@@ -36,7 +54,7 @@ export default function BillsPage() {
         <div>
           <h1 style={{ fontSize: 21, fontWeight: 800 }}>Faturalar ve Abonelikler</h1>
           <p style={{ fontSize: 11, color: 'var(--t3)', marginTop: 2 }}>
-            Sabit faturalar ve ekstrelerden tespit edilen abonelikler
+            Sabit faturalar ve hizmet abonelikleri (finansal transferler hariç)
           </p>
         </div>
         <Button variant="primary" onClick={openBillModal}>
@@ -47,7 +65,7 @@ export default function BillsPage() {
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 12, marginBottom: 16 }}>
         {[
           { label: 'Aylık fatura toplamı', value: `${fmt(totalMonth)} ₺`, color: 'var(--t1)' },
-          { label: 'Tahmini abonelik yükü', value: `${fmt(subscriptionMonthlyTotal)} ₺`, color: 'var(--green)' },
+          { label: 'Aylık sabit gider (abonelik)', value: `${fmt(subscriptionMonthlyTotal)} ₺`, color: 'var(--green)' },
           { label: 'Bu hafta (fatura)', value: `${fmt(thisWeekAmt)} ₺`, color: 'var(--amber)' },
         ].map((s) => (
           <div
@@ -78,34 +96,13 @@ export default function BillsPage() {
       <Card style={{ marginBottom: 16 }}>
         <div className="mb-2 flex items-center gap-2">
           <Repeat2 className="h-4 w-4 text-emerald-400" strokeWidth={1.75} aria-hidden />
-          <SectionLabel>Abonelikler (işlemlerden)</SectionLabel>
+          <SectionLabel>Abonelikler</SectionLabel>
         </div>
         <p style={{ fontSize: 10, color: 'var(--t3)', marginBottom: 12 }}>
-          Netflix, Spotify vb. veya aylık tekrarlayan tutarlar analiz ile &quot;Abonelik&quot; kategorisine taşınır.
+          Netflix, Spotify, operatör faturaları vb. Kredi kartı ödemesi ve nakit avans bu listede yer almaz.
         </p>
         {subs.map((s) => (
-          <div
-            key={s.label}
-            style={{
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center',
-              padding: '10px 0',
-              borderBottom: '1px solid rgba(28,48,80,.4)',
-            }}
-          >
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-              <Repeat2 className="h-4 w-4 shrink-0 text-slate-400" strokeWidth={1.5} aria-hidden />
-              <div>
-                <div style={{ fontSize: 12, fontWeight: 600 }}>{s.label}</div>
-                <div style={{ fontSize: 9, color: 'var(--t3)' }}>
-                  {s.sample_count} örnek · Son: {s.last_seen || '—'}
-                  {s.bank_id ? ` · ${s.bank_id}` : ''}
-                </div>
-              </div>
-            </div>
-            <div style={{ fontSize: 14, fontWeight: 800 }}>~{fmt(s.monthly_estimate_try)} ₺/ay</div>
-          </div>
+          <SubscriptionRow key={s.id || s.label} subscription={s} onRemove={removeSubscription} />
         ))}
         {subs.length === 0 && (
           <p style={{ textAlign: 'center', padding: 16, color: 'var(--t3)', fontSize: 11 }}>

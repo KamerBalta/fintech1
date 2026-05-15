@@ -25,8 +25,10 @@ RULES: List[Tuple[str, str, bool]] = [
     (r"spotify|apple music|youtube premium|deezer",                  "Abonelik",      True),
     (r"amazon prime|microsoft 365|office 365|adobe|linkedin",        "Abonelik",      True),
     (r"udemy|coursera|duolingo|bein connect",                        "Abonelik",      True),
-    # Kredi / Finansal
-    (r"kredi taksit|kart borcu|banka|mortgage|konut kredisi",        "Kredi",         True),
+    # Kredi / Finansal — abonelik değil, tekrarlayan borç ödemesi
+    (r"kredi\s*taksit|taksitli\s*nakit|nakit\s*avans|kart\s*borç|kart\s*borcu|"
+     r"kredi\s*kart[ıi]?\s*ödem|borç\s*ödem|mortgage|konut\s*kredi",  "Borç",          False),
+    (r"virman|eft\b|havale|kendi\s*hesab|hesaplar\s*aras",            "Transfer",      False),
     # Market
     (r"migros|carrefour|bim\b|a101|şok market|metro|macro",         "Market & Gıda", False),
     (r"getir|yemeksepeti|trendyol yemek|pizza|burger|restoran",      "Yemek",         False),

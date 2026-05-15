@@ -47,7 +47,7 @@ async def list_subscriptions(
 ):
     bid = _norm_bank_filter(bank_id)
     await subscription_service.refresh_subscription_flags(db, user.id)
-    rows = await subscription_service.subscription_monthly_summary(db, user.id, bank_id=bid)
+    rows = await subscription_service.list_active_subscriptions(db, user.id, bank_id=bid)
     total = sum(float(r["monthly_estimate_try"]) for r in rows)
     return SubscriptionsSummaryOut(
         items=[SubscriptionRowOut.model_validate(r) for r in rows],
@@ -96,6 +96,7 @@ async def user_insights(
     bank_id: str | None = Query(None),
 ):
     await anomaly_service.flag_anomalies_for_user(db, user.id)
+    await subscription_service.refresh_subscription_flags(db, user.id)
     data = await credit_service.get_user_insights(user.id, db, bank_id=_norm_bank_filter(bank_id))
     return InsightsOut.model_validate(data)
 
@@ -124,16 +125,22 @@ async def chat(
     db=Depends(get_db),
     user: MongoUser = Depends(get_current_user),
 ):
-    bid = (payload.bank_id or "").strip() or None
-    if bid in (None, "", "all"):
-        bid = None
-    else:
-        bid = normalize_bank_id(bid)
-    server_ctx = await build_financial_assistant_context(db, user.id, bank_id=bid)
-    reply = await chat_service.chat_with_assistant(
-        payload.message,
-        server_ctx,
-        payload.history,
-        client_context=payload.financial_context or None,
-    )
-    return ChatOut(success=True, reply=reply)
+    try:
+        bid = (payload.bank_id or "").strip() or None
+        if bid in (None, "", "all"):
+            bid = None
+        else:
+            bid = normalize_bank_id(bid)
+        server_ctx = await build_financial_assistant_context(db, user.id, bank_id=bid)
+        reply = await chat_service.chat_with_assistant(
+            payload.message,
+            server_ctx,
+            payload.history,
+            client_context=payload.financial_context or None,
+        )
+        return ChatOut(success=True, reply=reply)
+    except Exception as exc:
+        return ChatOut(
+            success=False,
+            reply=f"Sohbet işlenirken hata oluştu: {exc}. Lütfen backend loglarını kontrol edin.",
+        )
